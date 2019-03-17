@@ -14,6 +14,16 @@ def cxy_wh_2_bbox(cxy, wh):
     return np.array([cxy[0]-wh[0]/2, cxy[1]-wh[1]/2, cxy[0]+wh[0]/2, cxy[1]+wh[1]/2])  # 0-index
 
 
+def cxy_wh_2_bbox_w_h_separate(cxy, w, h):
+    '''Center (x,y), width, and height to bounding box.
+    
+    Returns:
+        np.array of size 4 where index 0 is x coordinate of left edge of BB, index 1 is y coordinate of top edge of BB,
+        index 2 is x coordinate of right edge of BB, and index 3 is y coordinate of bottom edge of BB
+    '''
+    return np.array([cxy[0]-wh[0]/2, cxy[1]-wh[1]/2, cxy[0]+wh[0]/2, cxy[1]+wh[1]/2])  # 0-index
+
+
 def gaussian_shaped_labels(sigma, sz):
     x, y = np.meshgrid(np.arange(1, sz[0]+1) - np.floor(float(sz[0]) / 2), np.arange(1, sz[1]+1) - np.floor(float(sz[1]) / 2))
     d = x ** 2 + y ** 2
@@ -31,6 +41,24 @@ def crop_chw(image, bbox, out_sz, padding=(0, 0, 0)):
     mapping = np.array([[a, 0, c],
                         [0, b, d]]).astype(np.float)
     crop = cv2.warpAffine(image, mapping, (out_sz, out_sz), borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
+    return np.transpose(crop, (2, 0, 1))
+
+
+def crop_chw_2d_out_sz(image, bbox, out_sz, padding=(0, 0, 0)):
+    # (bbox[2] - bbox[0]) is the width of the bbox, so |a| is the factor by which the output width is greater than 
+    # (or less than) the bbox width.
+    a = (out_sz[1]-1) / (bbox[2]-bbox[0])
+    # (bbox[3] - bbox[1]) is the height of the bbox, so |b| is the factor by which the output height is greater than 
+    # (or less than) the bbox height.
+    b = (out_sz[0]-1) / (bbox[3]-bbox[1])
+    # 
+    #c = -a * bbox[0]
+    c = 0
+    #d = -b * bbox[1]
+    d = 0
+    mapping = np.array([[a, 0, c],
+                        [0, b, d]]).astype(np.float)
+    crop = cv2.warpAffine(image, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
     return np.transpose(crop, (2, 0, 1))
 
 
