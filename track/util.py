@@ -36,4 +36,4 @@ def crop_chw(image, bbox, out_sz, padding=(0, 0, 0)):
 
 if __name__ == '__main__':
     a = gaussian_shaped_labels(10, [5,5])
-    print a
+#    print a

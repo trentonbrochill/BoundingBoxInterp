@@ -23,7 +23,7 @@ class TrackerConfig(object):
     output_sigma_factor = 0.1
     interp_factor = 0.01
     num_scale = 3
-    scale_step = 1.0275
+    scale_step = 2.  # 1.0275
     scale_factor = scale_step ** (np.arange(num_scale) - num_scale / 2)
     min_scale_factor = 0.2
     max_scale_factor = 5
@@ -114,7 +114,7 @@ if __name__ == '__main__':
     videos = sorted(annos.keys())
 
     use_gpu = True
-    visualization = False
+    visualization = True
 
     # default parameter and load feature extractor network
     config = TrackerConfig()
@@ -135,7 +135,8 @@ if __name__ == '__main__':
         target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
 
         im = cv2.imread(image_files[0])  # HxWxC
-
+        #print image_files[0]
+        #input()
         # confine results
         min_sz = np.maximum(config.min_scale_factor * target_sz, 4)
         max_sz = np.minimum(im.shape[:2], config.max_scale_factor * target_sz)
@@ -152,6 +153,7 @@ if __name__ == '__main__':
         patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
         for f in range(1, n_images):  # track
             im = cv2.imread(image_files[f])
+            print config.scale_factor
 
             for i in range(config.num_scale):  # crop multi-scale search region
                 window_sz = target_sz * (config.scale_factor[i] * (1 + config.padding))
@@ -160,10 +162,42 @@ if __name__ == '__main__':
 
             search = patch_crop - config.net_average_image
             response = net(torch.Tensor(search).cuda())
+            ## hacks
+            my_response = response
+            #my_response = response.view(config.num_scale, -1) 
+            print my_response.shape
+            print search.shape
+            print patch_crop.shape
+            #print my_response[0]
+            patch_crop_im0 = patch_crop[0].transpose(1,2,0)
+            search_im0 = search[0].transpose(1,2,0)
+            search_im1 = search[1].transpose(1,2,0)
+            search_im2 = search[2].transpose(1,2,0)
+            im0 = my_response[0].cpu().detach().numpy().transpose(1,2,0)
+            def rearrangeMolecules(im):
+                return np.vstack([np.hstack([im[63:125,63:125,:],im[63:125,1:63,:]]),np.hstack([im[1:63,63:125,:],im[1:63,1:63,:]])])
+
+            im0 = rearrangeMolecules(im0)
+            print "min", np.min(im0)
+            print "max", np.max(im0)
+            cv2.imshow("scale0", im0 * 5)
+            cv2.imshow("search_scale0_search", search_im0 * 5)
+            cv2.imshow("search_scale1_search", search_im1 * 5)
+            cv2.imshow("search_scale2_search", search_im2 * 5)
+
+            im1 = my_response[1].cpu().detach().numpy().transpose(1,2,0)
+            im1 = rearrangeMolecules(im1)
+            cv2.imshow("scale1", im1 * 5)
+            im2 = my_response[2].cpu().detach().numpy().transpose(1,2,0)
+            im2 = rearrangeMolecules(im2)
+            cv2.imshow("scale2", im2 * 5)
+            cv2.waitKey(100)
+
+            ### hacks
             peak, idx = torch.max(response.view(config.num_scale, -1), 1)
             peak = peak.data.cpu().numpy() * config.scale_penalties
             best_scale = np.argmax(peak)
-            r_max, c_max = np.unravel_index(idx[best_scale], config.net_input_size)
+            r_max, c_max = np.unravel_index(idx.cpu()[best_scale], config.net_input_size)
 
             if r_max > config.net_input_size[0] / 2:
                 r_max = r_max - config.net_input_size[0]
@@ -184,11 +218,11 @@ if __name__ == '__main__':
             res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
 
             if visualization:
-                im_show = cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
+                im_show = im  #cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
                 cv2.rectangle(im_show, (int(target_pos[0] - target_sz[0] / 2), int(target_pos[1] - target_sz[1] / 2)),
                               (int(target_pos[0] + target_sz[0] / 2), int(target_pos[1] + target_sz[1] / 2)),
                               (0, 255, 0), 3)
-                cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+                cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.CV_AA)
                 cv2.imshow(video, im_show)
                 cv2.waitKey(1)
 
