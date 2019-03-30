@@ -33,33 +33,62 @@ def gaussian_shaped_labels(sigma, sz):
     return g
 
 
-def crop_chw(image, bbox, out_sz, padding=(0, 0, 0)):
-    a = (out_sz-1) / (bbox[2]-bbox[0])
-    b = (out_sz-1) / (bbox[3]-bbox[1])
+def crop_chw(image, bbox, out_sz, padding=(0,0,0)):
+    a = (out_sz[1] - 1) / (bbox[2]-bbox[0])
+    b = (out_sz[0] - 1) / (bbox[3]-bbox[1])
     c = -a * bbox[0]
     d = -b * bbox[1]
     mapping = np.array([[a, 0, c],
                         [0, b, d]]).astype(np.float)
-    crop = cv2.warpAffine(image, mapping, (out_sz, out_sz), borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
+    crop = cv2.warpAffine(image, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
     return np.transpose(crop, (2, 0, 1))
 
 
-def crop_chw_2d_out_sz(image, bbox, out_sz, padding=(0, 0, 0)):
+def resize_with_pad_to_square(image, scale_factors, out_sz, padding=(0,0,0)):
     # (bbox[2] - bbox[0]) is the width of the bbox, so |a| is the factor by which the output width is greater than 
     # (or less than) the bbox width.
-    a = (out_sz[1]-1) / (bbox[2]-bbox[0])
+    a = (float(out_sz[1])-1) / (image.shape[1])
     # (bbox[3] - bbox[1]) is the height of the bbox, so |b| is the factor by which the output height is greater than 
     # (or less than) the bbox height.
-    b = (out_sz[0]-1) / (bbox[3]-bbox[1])
+    b = (float(out_sz[0])-1) / (image.shape[0])
+
+    assert(scale_factors[0] * image.shape[0] <= out_sz[1])
+    assert(scale_factors[1] * image.shape[1] <= out_sz[0])
+
+    scale = min(a, b)
+
+    #print "a:", a, ", b:", b
+    #input()
+
     # 
     #c = -a * bbox[0]
     c = 0
     #d = -b * bbox[1]
     d = 0
-    mapping = np.array([[a, 0, c],
-                        [0, b, d]]).astype(np.float)
+    mapping = np.array([[scale_factors[1],                0, c],
+                        [               0, scale_factors[0], d]]).astype(np.float)
     crop = cv2.warpAffine(image, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
     return np.transpose(crop, (2, 0, 1))
+
+
+def pad_to_size_centered(image, out_sz, padding=(0,0,0)):
+
+    img_t = np.transpose(image, (1, 2, 0))
+
+    print img_t.shape
+
+    #c = -a * bbox[0]
+    c = (out_sz[0] / 2) - (img_t.shape[1]  / 2)
+    #d = -b * bbox[1]
+    d = (out_sz[1] / 2) - (img_t.shape[0]  / 2)
+
+    print "c:", c, ", d:", d
+
+    mapping = np.array([[1, 0, c],
+                        [0, 1, d]]).astype(np.float)
+    crop = cv2.warpAffine(img_t, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
+    return np.transpose(crop, (2, 0, 1))
+
 
 
 if __name__ == '__main__':
