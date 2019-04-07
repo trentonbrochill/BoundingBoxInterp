@@ -1,8 +1,11 @@
 from os.path import join, isdir
 from os import makedirs
+import os
+import sys
 import argparse
 import json
 import numpy as np
+import errno
 import torch
 
 import math
@@ -36,10 +39,12 @@ class TrackerConfig(object):
     # OTB2013 / AUC(0.665)
     feature_path = 'param.pth'
     scale_factors = np.array([.5, 1])
-    crop_sz = (int(math.ceil(720*scale_factors[1])), int(math.ceil(480*scale_factors[0])) )
+    #crop_sz = (int(math.ceil(720*scale_factors[1])), int(math.ceil(480*scale_factors[0])) )
+    square_crop_side_size = 720
+    crop_sz = (square_crop_side_size, square_crop_side_size)
 
     lambda0 = 1e-4
-    padding = 2
+    padding = 1.5
     output_sigma_factor = 0.1
     interp_factor = 0.01
     axis_num_scale = 1
@@ -139,11 +144,37 @@ def mkdir_p(path):
         else:
             raise
 
-def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_images, target_groundtruth_bb, scale_factor_pair, output_folder):
+
+def rearrangeMolecules(im):
+    im_h = im.shape[0]
+    im_w = im.shape[1]
+    return np.vstack([np.hstack([im[im_h/2:im_h,im_w/2:im_w,:],im[im_h/2:im_h,0:im_w/2,:]]),np.hstack([im[0:im_h/2,im_w/2:im_w,:],im[0:im_h/2,0:im_w/2,:]])])
+
+
+def normalize_to_255(im):
+    return (((im * 2.0) + 1.0) / 2.0 * 255.0).astype(np.uint8)
+
+
+def normalize_to_uint16(im):
+    return (((im * 2.0) + 1.0) / 2.0 * 65535.0).astype(np.uint16)
+
+
+def to_heatmap(im):
+    return apply_matplotlib_colormap(im )
+
+
+def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_images, scale_factor_pair, 
+                                                   target_image_index, target_groundtruth_bb, output_folder):
     output_folder_heatmap_dir = os.path.join(output_folder, "heatmap_images")
     output_folder_data_dir = os.path.join(output_folder, "heatmap_data")
-    mkdir_p(output_folder_image_dir)
+    mkdir_p(output_folder_heatmap_dir)
     mkdir_p(output_folder_data_dir)
+
+    use_gpu = True
+    visualization = True
+
+    lowest_min = 100
+    highest_max = -100
 
     # default parameter and load feature extractor network
     config = TrackerConfig()
@@ -151,16 +182,16 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     net.load_param(args.model)
     net.eval().cuda()
 
-    video_path_name = annos[video]['name']
-    init_rect = np.array(annos[video]['init_rect']).astype(np.float)
-    image_files = [join(base_path, video_path_name, 'img', im_f) for im_f in annos[video]['image_files']]
-    n_images = len(image_files)
+    init_rect = np.array(target_groundtruth_bb).astype(np.float)
+    image_files = [os.path.join(input_video_folder, "img", "{:04}.png".format(img_num + 1)) 
+                   for img_num in range(num_images)]
+    n_images = num_images
 
     tic = time.time()  # time start
 
     target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
 
-    im = cv2.imread(image_files[0])  # HxWxC
+    im = cv2.imread(image_files[target_image_index])  # HxWxC
     #print image_files[0]
     #input()
     # confine results
@@ -172,7 +203,8 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     #input()
     window_sz = target_sz * (1 + config.padding)
     bbox = cxy_wh_2_bbox(target_pos, window_sz)
-    patch = crop_chw(im, bbox, config.crop_sz)
+    patch = crop_chw(im, bbox, (300, 300),[104, 117, 123])
+    patch = pad_to_size_centered(patch, config.crop_sz,[104, 117, 123])
     #patch = resize_with_pad_to_square(im, config.crop_sz)
     #transposed_patch = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
     if visualization:
@@ -187,6 +219,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     #np.set_printoptions(linewidth=120)
     #print np.array(config.scale_penalties).reshape((9,9))
     #input()
+    speed = []
 
     res = [cxy_wh_2_rect1(target_pos, target_sz)]  # save in .txt
     patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
@@ -209,29 +242,32 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             #print config.scale_factor[x_scale_index], config.scale_factor[y_scale_index], bbox
             #patch_crop[i, :] = crop_chw(im, bbox, config.crop_sz)
         
-        patch_crop[0, :] = resize_with_pad_to_square(im, config.scale_factors, config.crop_sz)
+        patch_crop[0, :] = resize_with_pad_to_square(im, scale_factor_pair, config.crop_sz)
 
         search = patch_crop - config.net_average_image
         response = net(torch.Tensor(search).cuda())
 
+        np_response = response.cpu().detach().numpy()
+        uint16_response = rearrangeMolecules(normalize_to_uint16(np_response[0]).transpose(1,2,0))
+        cropped_size = (int(scale_factor_pair[0] * im.shape[0]), int(scale_factor_pair[1] * im.shape[1]))
+        cropped_uint16_response = uint16_response[:cropped_size[0], :cropped_size[1], :]
+        unwarped_uint16_response = reverse_resize(cropped_uint16_response, scale_factor_pair, (720,480))
+        
+        reponse_heatmap = to_heatmap(rearrangeMolecules(normalize_to_255(np_response[0]).transpose(1,2,0)))
+        cropped_size = (int(scale_factor_pair[0] * im.shape[0]), int(scale_factor_pair[1] * im.shape[1]))
+        cropped_heatmap = reponse_heatmap[:cropped_size[0], :cropped_size[1], :]
+        unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (720,480))
+        
+        cv2.imwrite(os.path.join(output_folder_data_dir, "{:04}.png".format(f)), unwarped_uint16_response)
+        cv2.imwrite(os.path.join(output_folder_heatmap_dir, "{:04}.png".format(f)), unwarped_heatmap)
+
         if visualization:
-            def rearrangeMolecules(im):
-                im_h = im.shape[0]
-                im_w = im.shape[1]
-                return np.vstack([np.hstack([im[im_h/2:im_h,im_w/2:im_w,:],im[im_h/2:im_h,0:im_w/2,:]]),np.hstack([im[0:im_h/2,im_w/2:im_w,:],im[0:im_h/2,0:im_w/2,:]])])
-
-            def normalize_to_255(im):
-                return ((im + 1.0) / 2.0 * 255.0).astype(np.uint8)
-
-            def to_heatmap(im):
-                return apply_matplotlib_colormap(im, )
-
       #      im0 = rearrangeMolecules(im0)
             transposed_searches = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
             two_d_searches = np.vstack([np.hstack(transposed_searches[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
                                                                       for i in range(config.axis_num_scale)])
             
-            np_response = response.cpu().detach().numpy()
+            
             im0 = rearrangeMolecules(np_response[0].transpose(1,2,0)) * 5
             lowest_min = lowest_min if lowest_min < np.min(np_response) else np.min(np_response)
             highest_max = highest_max if highest_max > np.max(np_response) else np.max(np_response)
@@ -255,6 +291,17 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             two_d_responses2 = np.vstack([np.hstack(rearranged_responses2[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
                                                                             for i in range(config.axis_num_scale)])
 
+            print "np_response.shape:", np_response.shape
+            
+            #input()
+            reponse_heatmap = to_heatmap(rearrangeMolecules(normalize_to_255(np_response[0]).transpose(1,2,0)))
+            cropped_size = (int(scale_factor_pair[0] * im.shape[0]), int(scale_factor_pair[1] * im.shape[1]))
+            print "reponse_heatmap.shape:", reponse_heatmap.shape
+            cropped_heatmap = reponse_heatmap[:cropped_size[0], :cropped_size[1], :]
+            unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (720,480))
+            cv2.imshow("cropped", cropped_heatmap)
+            cv2.imshow("unwarped", unwarped_heatmap)
+
             #np_response = response.cpu().detach().numpy()
             #rearranged_responses = np.array([rearrangeMolecules(r.transpose(1,2,0)) * 5 for r in np_response])
             #reshaped_responses = transposed_searches.reshape((config.num_scale, config.num_scale, -1))
@@ -265,13 +312,12 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             cv2.imshow("o2", two_d_responses2)
             print "two_d_responses2.shape:", two_d_responses2.shape 
             cv2.imshow("o", two_d_responses)
-  
             #for index,scaleValue in enumerate(config.scale_factor):
             #    cv2.imshow("i {} {:.2f}".format(index,scaleValue), search[index].transpose(1,2,0) * 5)
             #    imlocal = my_response[index].cpu().detach().numpy().transpose(1,2,0)
             #    imlocal = rearrangeMolecules(imlocal)
             #    cv2.imshow("o {} {:.2f}".format(index,scaleValue), imlocal * 5)
-            cv2.waitKey(500)
+            cv2.waitKey(50)
             #input()
 
         ### hacks
@@ -294,11 +340,11 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         target_sz = np.minimum(np.maximum(window_sz / (1 + config.padding), min_sz), max_sz)
 
         # model update
-        window_sz = target_sz * (1 + config.padding)
-        bbox = cxy_wh_2_bbox(target_pos, window_sz)
-        patch = crop_chw(im, bbox, config.crop_sz)
-        target = patch - config.net_average_image
-        net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
+        #window_sz = target_sz * (1 + config.padding)
+        #bbox = cxy_wh_2_bbox(target_pos, window_sz)
+        #patch = crop_chw(im, bbox, config.crop_sz)
+        #target = patch - config.net_average_image
+        #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
 
         res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
 
@@ -309,12 +355,26 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
                           (0, 255, 0), 3)
             cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.CV_AA)
             cv2.imshow("video", im_show)
-            cv2.waitKey(1000)
+            cv2.waitKey(10)
 
     toc = time.time() - tic
     fps = n_images / toc
     speed.append(fps)
+    video_id = 0
+    video = "temp"
     print('{:3d} Video: {:12s} Time: {:3.1f}s\tSpeed: {:3.1f}fps'.format(video_id, video, toc, fps))
+
+    # save result
+    #test_path = join('result', dataset, 'DCFNet_test')
+    #if not isdir(test_path): makedirs(test_path)
+    #result_path = join(test_path, video + '.txt')
+    #with open(result_path, 'w') as f:
+    #    for x in res:
+    #        f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
+
+    print('***Total Mean Speed: {:3.1f} (FPS)***'.format(np.mean(speed)))
+
+#eval_auc(dataset, 'DCFNet_test', 0, 1)
 
     # save result
     #test_path = join('result', dataset, 'DCFNet_test')
@@ -326,30 +386,38 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
 
 
 def generate_heatmaps_for_video(input_video_folder, all_scale_factor_pairs, output_folder):
-    use_gpu = True
-    visualization = False
 
-    lowest_min = 100
-    highest_max = -100
+    print "Generating heatmaps: {}, {} -> {}".format(input_video_folder, all_scale_factor_pairs, output_folder)
 
     # Read the ground truth bounding boxes for each image in this video
-    with open(os.path.join(output_folder, "groundtruth_rect.txt"), 'r') as groundtruth_file:
+    with open(os.path.join(input_video_folder, "groundtruth_rect.txt"), 'r') as groundtruth_file:
         all_lines = groundtruth_file.readlines()
 
     # Make sure sure all_lines is defined and is not empty
     if not all_lines:
-        raise RuntimeError("{} is empty".format(os.path.join(output_folder, "groundtruth_rect.txt")))
+        raise RuntimeError("{} is empty".format(os.path.join(input_video_folder, "groundtruth_rect.txt")))
 
-    num_images = all_lines
+    num_images = len(all_lines)
     groundtruth_bbs = []
     for groundtruth_line in all_lines:
-        list_of_bb_size_strings = groundtruth.strip().replace(' ', '').split(',')
+        list_of_bb_size_strings = groundtruth_line.strip().replace(' ', '').split(',')
         assert(len(list_of_bb_size_strings) == 4)
         bb_sizes = [float(size_str) for size_str in list_of_bb_size_strings]
         groundtruth_bbs.append(bb_sizes)
 
-    for image_index in range(num_images):
-        image_output_dir = os.path.join(output_folder, "target_image_{}".format(image_index))
+    for scale_factor_y, scale_factor_x in all_scale_factor_pairs:
+        scale_factor_output_dir = os.path.join(output_folder, "scale_{}_x_{}_y".format(scale_factor_x, scale_factor_y))
+        for target_image_index in range(num_images):
+            target_image_output_dir = os.path.join(scale_factor_output_dir, "target_image_{}".format(target_image_index))
+             
+            generate_heatmap_for_specific_target_and_scale(input_video_folder=input_video_folder,
+                                                           num_images=num_images,
+                                                           scale_factor_pair=(scale_factor_y, scale_factor_x),
+                                                           target_image_index=target_image_index,
+                                                           target_groundtruth_bb=groundtruth_bbs[target_image_index],
+                                                           output_folder=target_image_output_dir)
+    
+
 
 
 
@@ -360,26 +428,35 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test DCFNet on OTB')
     parser.add_argument('--dataset', metavar='SET', default='OTB2013',
                         choices=['OTB2013', 'OTB2015'], help='tune on which dataset')
-    #parser.add_argument('--dataset_folder', metavar='FOLDER', required=True,
-    #                    help='Path of folder containing all dataset video folders')
+    parser.add_argument('--dataset_folder', metavar='FOLDER', required=True,
+                        help='Path of folder containing all dataset video folders')
+    parser.add_argument('--output_folder', metavar='FOLDER', required=True,
+                        help='Path of folder to write all generated heatmaps for videos in dataset_folder')
     parser.add_argument('--model', metavar='PATH', default='param.pth')
     args = parser.parse_args()
 
-    dataset = args.dataset
-    base_path = join('dataset', dataset)
-    json_path = join('dataset', dataset + '.json')
-    annos = json.load(open(json_path, 'r'))
-    videos = sorted(annos.keys())
+    #dataset = args.dataset
+    ##base_path = join('dataset', dataset)
+    #json_path = join('dataset', dataset + '.json')
+    #annos = json.load(open(json_path, 'r'))
+    #videos = sorted(annos.keys())
 
-    import os
+    abs_dataset_folder = os.path.realpath(args.dataset_folder)
+    abs_output_folder = os.path.realpath(args.output_folder)
+    print "abs_dataset_folder:", abs_dataset_folder
+    for dir_entry in os.listdir(abs_dataset_folder):
+        input_video_folder = os.path.join(abs_dataset_folder, dir_entry)
+        print "dir_entry:", dir_entry
+        if not os.path.isdir(input_video_folder):
+            print "not directory:", dir_entry
+            continue
 
-    #abs_dataset_folder = os.path.realpath(args.dataset_folder)
-    #for dir_entry in os.listdir(abs_dataset_folder):
-    #    if not os.path.isdir(dir_entry):
-    #        continue
+        output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
+        generate_heatmaps_for_video(input_video_folder=input_video_folder,
+                                    all_scale_factor_pairs=[(1, 1), (1.25, 1), (1, 1.25)],
+                                    output_folder=output_dir_for_this_video)
 
-
-
+    sys.exit(0)
 
     videos = ["2014_08_27_2257_parkedMovingPerson203BedSunnyCloudyWeeds_GrayShirt_Row_CloseCross_PrimaryLog"]
     annos = {videos[0]: {}}
@@ -434,182 +511,196 @@ if __name__ == '__main__':
     net.load_param(args.model)
     net.eval().cuda()
 
-    speed = []
-    # loop videos
-    for video_id, video in enumerate(videos):  # run without resetting
-        video_path_name = annos[video]['name']
-        init_rect = np.array(annos[video]['init_rect']).astype(np.float)
-        image_files = [join(base_path, video_path_name, 'img', im_f) for im_f in annos[video]['image_files']]
-        n_images = len(image_files)
+    while 1:
+        speed = []
+        # loop videos
+        for video_id, video in enumerate(videos):  # run without resetting
+            video_path_name = annos[video]['name']
+            init_rect = np.array(annos[video]['init_rect']).astype(np.float)
+            image_files = [join(base_path, video_path_name, 'img', im_f) for im_f in annos[video]['image_files']]
+            n_images = len(image_files)
 
-        tic = time.time()  # time start
+            tic = time.time()  # time start
 
-        target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
+            target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
 
-        im = cv2.imread(image_files[0])  # HxWxC
-        #print image_files[0]
-        #input()
-        # confine results
-        min_sz = np.maximum(config.min_scale_factor * target_sz, 4)
-        max_sz = np.minimum(im.shape[:2], config.max_scale_factor * target_sz)
+            im = cv2.imread(image_files[0])  # HxWxC
+            #print image_files[0]
+            #input()
+            # confine results
+            min_sz = np.maximum(config.min_scale_factor * target_sz, 4)
+            max_sz = np.minimum(im.shape[:2], config.max_scale_factor * target_sz)
 
-        # crop template
-        print im.shape
-        #input()
-        window_sz = target_sz * (1 + config.padding)
-        bbox = cxy_wh_2_bbox(target_pos, window_sz)
-        patch = crop_chw(im, bbox, (125, 125))
-        patch = pad_to_size_centered(patch, config.crop_sz)
-        #patch = resize_with_pad_to_square(im, config.crop_sz)
-        #transposed_patch = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
-        if visualization:
-            cv2.imshow("patch", (patch.transpose(1,2,0) / 255.0))
-            cv2.waitKey(500)
-            print patch.shape
-
-        target = patch - config.net_average_image
-        net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
-
-        #print config.scale_penalties
-        #np.set_printoptions(linewidth=120)
-        #print np.array(config.scale_penalties).reshape((9,9))
-        #input()
-
-        res = [cxy_wh_2_rect1(target_pos, target_sz)]  # save in .txt
-        patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
-        for f in range(1, n_images):  # track
-            im = cv2.imread(image_files[f])
-            #print config.scale_factor
-
-            #for i in range(config.num_scale):  # crop multi-scale search region
-                #x_scale_index = i / config.axis_num_scale  # Integer division
-                #y_scale_index = i % config.axis_num_scale
-
-                #window_sz = target_sz * (config.scale_factor[i] * (1 + config.padding))
-                
-                #import copy
-                #window_sz = copy.deepcopy(target_sz)
-                #window_sz[0] *= (config.scale_factor[x_scale_index] * (1 + config.padding))
-                #window_sz[1] *= (config.scale_factor[y_scale_index] * (1 + config.padding))
-                #bbox = cxy_wh_2_bbox(target_pos, window_sz)
-                
-                #print config.scale_factor[x_scale_index], config.scale_factor[y_scale_index], bbox
-                #patch_crop[i, :] = crop_chw(im, bbox, config.crop_sz)
-            
-            patch_crop[0, :] = resize_with_pad_to_square(im, config.scale_factors, config.crop_sz)
-
-            search = patch_crop - config.net_average_image
-            response = net(torch.Tensor(search).cuda())
-
+            # crop template
+            print im.shape
+            #input()
+            window_sz = target_sz * (1 + config.padding)
+            bbox = cxy_wh_2_bbox(target_pos, window_sz)
+            patch = crop_chw(im, bbox, (300, 300))
+            patch = pad_to_size_centered(patch, config.crop_sz)
+            #patch = resize_with_pad_to_square(im, config.crop_sz)
+            #transposed_patch = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
             if visualization:
-                def rearrangeMolecules(im):
-                    im_h = im.shape[0]
-                    im_w = im.shape[1]
-                    return np.vstack([np.hstack([im[im_h/2:im_h,im_w/2:im_w,:],im[im_h/2:im_h,0:im_w/2,:]]),np.hstack([im[0:im_h/2,im_w/2:im_w,:],im[0:im_h/2,0:im_w/2,:]])])
+                cv2.imshow("patch", (patch.transpose(1,2,0) / 255.0))
+                cv2.waitKey(500)
+                print patch.shape
 
-                def normalize_to_255(im):
-                    return (((im * 2.0) + 1.0) / 2.0 * 255.0).astype(np.uint8)
+            target = patch - config.net_average_image
+            net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
 
-                def to_heatmap(im):
-                    return apply_matplotlib_colormap(im )
+            #print config.scale_penalties
+            #np.set_printoptions(linewidth=120)
+            #print np.array(config.scale_penalties).reshape((9,9))
+            #input()
 
-          #      im0 = rearrangeMolecules(im0)
-                transposed_searches = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
-                two_d_searches = np.vstack([np.hstack(transposed_searches[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
-                                                                          for i in range(config.axis_num_scale)])
+            res = [cxy_wh_2_rect1(target_pos, target_sz)]  # save in .txt
+            patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
+            for f in range(1, n_images):  # track
+                im = cv2.imread(image_files[f])
+                #print config.scale_factor
+
+                #for i in range(config.num_scale):  # crop multi-scale search region
+                    #x_scale_index = i / config.axis_num_scale  # Integer division
+                    #y_scale_index = i % config.axis_num_scale
+
+                    #window_sz = target_sz * (config.scale_factor[i] * (1 + config.padding))
+                    
+                    #import copy
+                    #window_sz = copy.deepcopy(target_sz)
+                    #window_sz[0] *= (config.scale_factor[x_scale_index] * (1 + config.padding))
+                    #window_sz[1] *= (config.scale_factor[y_scale_index] * (1 + config.padding))
+                    #bbox = cxy_wh_2_bbox(target_pos, window_sz)
+                    
+                    #print config.scale_factor[x_scale_index], config.scale_factor[y_scale_index], bbox
+                    #patch_crop[i, :] = crop_chw(im, bbox, config.crop_sz)
                 
-                np_response = response.cpu().detach().numpy()
-                im0 = rearrangeMolecules(np_response[0].transpose(1,2,0)) * 5
-                lowest_min = lowest_min if lowest_min < np.min(np_response) else np.min(np_response)
-                highest_max = highest_max if highest_max > np.max(np_response) else np.max(np_response)
-                print "lowest_min", lowest_min
-                print "highest_max", highest_max
-                normalized_im0 = normalize_to_255(im0)
-                print "normalized min", np.min(normalized_im0)
-                print "normalized max", np.max(normalized_im0)
-                #im0_heat = cv2.applyColorMap(((im0 - np.min(im0)) / (np.max(im0) - np.min(im0)) * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
-                #cv2.imshow("heat", im0_heat)
-                #assert(abs(np.max(im0)) + abs(np.min(im0)) < 1.0)
-                rearranged_responses = np.array([to_heatmap(rearrangeMolecules(r.transpose(1,2,0)))
-                                                 for r in normalize_to_255(np_response)])
+                patch_crop[0, :] = resize_with_pad_to_square(im, config.scale_factors, config.crop_sz)
 
-                two_d_responses = np.vstack([np.hstack(rearranged_responses[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
-                                                                            for i in range(config.axis_num_scale)])
+                search = patch_crop - config.net_average_image
+                response = net(torch.Tensor(search).cuda())
 
-                rearranged_responses2 = np.array([to_heatmap(r.transpose(1,2,0))
-                                                 for r in normalize_to_255(np_response)])
+                if visualization:
+                    
 
-                two_d_responses2 = np.vstack([np.hstack(rearranged_responses2[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
+                    def rearrangeMolecules(im):
+                        im_h = im.shape[0]
+                        im_w = im.shape[1]
+                        return np.vstack([np.hstack([im[im_h/2:im_h,im_w/2:im_w,:],im[im_h/2:im_h,0:im_w/2,:]]),np.hstack([im[0:im_h/2,im_w/2:im_w,:],im[0:im_h/2,0:im_w/2,:]])])
+
+                    def normalize_to_255(im):
+                        return (((im * 2.0) + 1.0) / 2.0 * 255.0).astype(np.uint8)
+
+                    def to_heatmap(im):
+                        return apply_matplotlib_colormap(im )
+
+              #      im0 = rearrangeMolecules(im0)
+                    transposed_searches = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
+                    two_d_searches = np.vstack([np.hstack(transposed_searches[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
+                                                                              for i in range(config.axis_num_scale)])
+                    
+                    np_response = response.cpu().detach().numpy()
+                    im0 = rearrangeMolecules(np_response[0].transpose(1,2,0)) * 5
+                    lowest_min = lowest_min if lowest_min < np.min(np_response) else np.min(np_response)
+                    highest_max = highest_max if highest_max > np.max(np_response) else np.max(np_response)
+                    print "lowest_min", lowest_min
+                    print "highest_max", highest_max
+                    normalized_im0 = normalize_to_255(im0)
+                    print "normalized min", np.min(normalized_im0)
+                    print "normalized max", np.max(normalized_im0)
+                    #im0_heat = cv2.applyColorMap(((im0 - np.min(im0)) / (np.max(im0) - np.min(im0)) * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
+                    #cv2.imshow("heat", im0_heat)
+                    #assert(abs(np.max(im0)) + abs(np.min(im0)) < 1.0)
+                    rearranged_responses = np.array([to_heatmap(rearrangeMolecules(r.transpose(1,2,0)))
+                                                     for r in normalize_to_255(np_response)])
+
+                    two_d_responses = np.vstack([np.hstack(rearranged_responses[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
                                                                                 for i in range(config.axis_num_scale)])
 
-                #np_response = response.cpu().detach().numpy()
-                #rearranged_responses = np.array([rearrangeMolecules(r.transpose(1,2,0)) * 5 for r in np_response])
-                #reshaped_responses = transposed_searches.reshape((config.num_scale, config.num_scale, -1))
-                #all_searches = np.hstack(transposed_searches)
-                #all_responses = np.hstack(rearranged_responses)
-                #to_display = np.vstack([np.hstack(transposed_searches), np.hstack(rearranged_responses)])
-                cv2.imshow("i", two_d_searches)
-                cv2.imshow("o2", two_d_responses2)
-                print "two_d_responses2.shape:", two_d_responses2.shape 
-                cv2.imshow("o", two_d_responses)
-                #for index,scaleValue in enumerate(config.scale_factor):
-                #    cv2.imshow("i {} {:.2f}".format(index,scaleValue), search[index].transpose(1,2,0) * 5)
-                #    imlocal = my_response[index].cpu().detach().numpy().transpose(1,2,0)
-                #    imlocal = rearrangeMolecules(imlocal)
-                #    cv2.imshow("o {} {:.2f}".format(index,scaleValue), imlocal * 5)
-                cv2.waitKey(500)
+                    rearranged_responses2 = np.array([to_heatmap(r.transpose(1,2,0))
+                                                     for r in normalize_to_255(np_response)])
+
+                    two_d_responses2 = np.vstack([np.hstack(rearranged_responses2[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
+                                                                                    for i in range(config.axis_num_scale)])
+
+                    print "np_response.shape:", np_response.shape
+                    
+                    #input()
+                    reponse_heatmap = to_heatmap(rearrangeMolecules(normalize_to_255(np_response[0]).transpose(1,2,0)))
+                    cropped_size = (int(config.scale_factors[0] * im.shape[0]), int(config.scale_factors[1] * im.shape[1]))
+                    print "reponse_heatmap.shape:", reponse_heatmap.shape
+                    cropped_heatmap = reponse_heatmap[:cropped_size[0], :cropped_size[1], :]
+                    unwarped_heatmap = reverse_resize(cropped_heatmap, config.scale_factors, (720,480))
+                    cv2.imshow("cropped", cropped_heatmap)
+                    cv2.imshow("unwarped", unwarped_heatmap)
+
+                    #np_response = response.cpu().detach().numpy()
+                    #rearranged_responses = np.array([rearrangeMolecules(r.transpose(1,2,0)) * 5 for r in np_response])
+                    #reshaped_responses = transposed_searches.reshape((config.num_scale, config.num_scale, -1))
+                    #all_searches = np.hstack(transposed_searches)
+                    #all_responses = np.hstack(rearranged_responses)
+                    #to_display = np.vstack([np.hstack(transposed_searches), np.hstack(rearranged_responses)])
+                    cv2.imshow("i", two_d_searches)
+                    cv2.imshow("o2", two_d_responses2)
+                    print "two_d_responses2.shape:", two_d_responses2.shape 
+                    cv2.imshow("o", two_d_responses)
+                    #for index,scaleValue in enumerate(config.scale_factor):
+                    #    cv2.imshow("i {} {:.2f}".format(index,scaleValue), search[index].transpose(1,2,0) * 5)
+                    #    imlocal = my_response[index].cpu().detach().numpy().transpose(1,2,0)
+                    #    imlocal = rearrangeMolecules(imlocal)
+                    #    cv2.imshow("o {} {:.2f}".format(index,scaleValue), imlocal * 5)
+                    cv2.waitKey(500)
+                    #input()
+
+                ### hacks
+                peak, idx = torch.max(response.view(config.num_scale, -1), 1)
+                peak = peak.data.cpu().numpy() * config.scale_penalties
+                best_scale = np.argmax(peak)
+                #r_max, c_max = np.unravel_index(idx.cpu()[best_scale], config.net_input_size)
+
+                #if r_max > config.net_input_size[0] / 2:
+                #    r_max = r_max - config.net_input_size[0]
+                #if c_max > config.net_input_size[1] / 2:
+                #    c_max = c_max - config.net_input_size[1]
+
+                #print window_sz.shape
                 #input()
+                #window_sz = target_sz * (config.scale_factor[best_scale] * (1 + config.padding))
+                #window_sz = np.multiply(target_sz, (config.scale_factor_pairs[best_scale] * (1 + config.padding)))
 
-            ### hacks
-            peak, idx = torch.max(response.view(config.num_scale, -1), 1)
-            peak = peak.data.cpu().numpy() * config.scale_penalties
-            best_scale = np.argmax(peak)
-            #r_max, c_max = np.unravel_index(idx.cpu()[best_scale], config.net_input_size)
+                #target_pos = target_pos + np.array([c_max, r_max]) * window_sz / config.net_input_size
+                target_sz = np.minimum(np.maximum(window_sz / (1 + config.padding), min_sz), max_sz)
 
-            #if r_max > config.net_input_size[0] / 2:
-            #    r_max = r_max - config.net_input_size[0]
-            #if c_max > config.net_input_size[1] / 2:
-            #    c_max = c_max - config.net_input_size[1]
+                # model update
+                #window_sz = target_sz * (1 + config.padding)
+                #bbox = cxy_wh_2_bbox(target_pos, window_sz)
+                #patch = crop_chw(im, bbox, config.crop_sz)
+                #target = patch - config.net_average_image
+                #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
 
-            #print window_sz.shape
-            #input()
-            #window_sz = target_sz * (config.scale_factor[best_scale] * (1 + config.padding))
-            #window_sz = np.multiply(target_sz, (config.scale_factor_pairs[best_scale] * (1 + config.padding)))
+                res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
 
-            #target_pos = target_pos + np.array([c_max, r_max]) * window_sz / config.net_input_size
-            target_sz = np.minimum(np.maximum(window_sz / (1 + config.padding), min_sz), max_sz)
+                if visualization:
+                    im_show = im  #cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
+                    cv2.rectangle(im_show, (int(target_pos[0] - target_sz[0] / 2), int(target_pos[1] - target_sz[1] / 2)),
+                                  (int(target_pos[0] + target_sz[0] / 2), int(target_pos[1] + target_sz[1] / 2)),
+                                  (0, 255, 0), 3)
+                    cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.CV_AA)
+                    cv2.imshow("video", im_show)
+                    cv2.waitKey(1000)
 
-            # model update
-            #window_sz = target_sz * (1 + config.padding)
-            #bbox = cxy_wh_2_bbox(target_pos, window_sz)
-            #patch = crop_chw(im, bbox, config.crop_sz)
-            #target = patch - config.net_average_image
-            #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
+            toc = time.time() - tic
+            fps = n_images / toc
+            speed.append(fps)
+            print('{:3d} Video: {:12s} Time: {:3.1f}s\tSpeed: {:3.1f}fps'.format(video_id, video, toc, fps))
 
-            res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
+            # save result
+            #test_path = join('result', dataset, 'DCFNet_test')
+            #if not isdir(test_path): makedirs(test_path)
+            #result_path = join(test_path, video + '.txt')
+            #with open(result_path, 'w') as f:
+            #    for x in res:
+            #        f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
 
-            if visualization:
-                im_show = im  #cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
-                cv2.rectangle(im_show, (int(target_pos[0] - target_sz[0] / 2), int(target_pos[1] - target_sz[1] / 2)),
-                              (int(target_pos[0] + target_sz[0] / 2), int(target_pos[1] + target_sz[1] / 2)),
-                              (0, 255, 0), 3)
-                cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.CV_AA)
-                cv2.imshow("video", im_show)
-                cv2.waitKey(1000)
+        print('***Total Mean Speed: {:3.1f} (FPS)***'.format(np.mean(speed)))
 
-        toc = time.time() - tic
-        fps = n_images / toc
-        speed.append(fps)
-        print('{:3d} Video: {:12s} Time: {:3.1f}s\tSpeed: {:3.1f}fps'.format(video_id, video, toc, fps))
-
-        # save result
-        #test_path = join('result', dataset, 'DCFNet_test')
-        #if not isdir(test_path): makedirs(test_path)
-        #result_path = join(test_path, video + '.txt')
-        #with open(result_path, 'w') as f:
-        #    for x in res:
-        #        f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
-
-    print('***Total Mean Speed: {:3.1f} (FPS)***'.format(np.mean(speed)))
-
-    #eval_auc(dataset, 'DCFNet_test', 0, 1)
+        #eval_auc(dataset, 'DCFNet_test', 0, 1)
