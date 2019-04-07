@@ -40,7 +40,7 @@ class TrackerConfig(object):
     feature_path = 'param.pth'
     scale_factors = np.array([.5, 1])
     #crop_sz = (int(math.ceil(720*scale_factors[1])), int(math.ceil(480*scale_factors[0])) )
-    square_crop_side_size = 720
+    square_crop_side_size = 1440
     crop_sz = (square_crop_side_size, square_crop_side_size)
 
     lambda0 = 1e-4
@@ -169,6 +169,8 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     output_folder_data_dir = os.path.join(output_folder, "heatmap_data")
     mkdir_p(output_folder_heatmap_dir)
     mkdir_p(output_folder_data_dir)
+
+    print "scale_factor_pair:", scale_factor_pair
 
     use_gpu = True
     visualization = True
@@ -385,9 +387,9 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     #        f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
 
 
-def generate_heatmaps_for_video(input_video_folder, all_scale_factor_pairs, output_folder):
+def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
 
-    print "Generating heatmaps: {}, {} -> {}".format(input_video_folder, all_scale_factor_pairs, output_folder)
+    print "Generating heatmaps: {}, {} -> {}".format(input_video_folder, bb_hw_pairs, output_folder)
 
     # Read the ground truth bounding boxes for each image in this video
     with open(os.path.join(input_video_folder, "groundtruth_rect.txt"), 'r') as groundtruth_file:
@@ -405,23 +407,28 @@ def generate_heatmaps_for_video(input_video_folder, all_scale_factor_pairs, outp
         bb_sizes = [float(size_str) for size_str in list_of_bb_size_strings]
         groundtruth_bbs.append(bb_sizes)
 
-    for scale_factor_y, scale_factor_x in all_scale_factor_pairs:
-        scale_factor_output_dir = os.path.join(output_folder, "scale_{}_x_{}_y".format(scale_factor_x, scale_factor_y))
+    for target_bb_h, target_bb_w in bb_hw_pairs:
+        scale_factor_output_dir = os.path.join(output_folder, "bb_h={}_w={}".format(target_bb_h, target_bb_w))
         for target_image_index in range(num_images):
             target_image_output_dir = os.path.join(scale_factor_output_dir, "target_image_{}".format(target_image_index))
-             
+            
+            gt_bb = groundtruth_bbs[target_image_index]
+
+
+            print "gt_bb:", gt_bb
+
+            gt_bb_w = abs(gt_bb[2]-gt_bb[0])
+            gt_bb_h = abs(gt_bb[3]-gt_bb[1])
+            scale_factor_y = float(target_bb_h) / float(gt_bb_h)
+            scale_factor_x = float(target_bb_w) / float(gt_bb_w)
+
             generate_heatmap_for_specific_target_and_scale(input_video_folder=input_video_folder,
                                                            num_images=num_images,
                                                            scale_factor_pair=(scale_factor_y, scale_factor_x),
                                                            target_image_index=target_image_index,
-                                                           target_groundtruth_bb=groundtruth_bbs[target_image_index],
+                                                           target_groundtruth_bb=gt_bb,
                                                            output_folder=target_image_output_dir)
     
-
-
-
-
-
 
 if __name__ == '__main__':
     # base dataset path and setting
@@ -453,7 +460,7 @@ if __name__ == '__main__':
 
         output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
         generate_heatmaps_for_video(input_video_folder=input_video_folder,
-                                    all_scale_factor_pairs=[(1, 1), (1.25, 1), (1, 1.25)],
+                                    bb_hw_pairs=[(300,300)],
                                     output_folder=output_dir_for_this_video)
 
     sys.exit(0)

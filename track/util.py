@@ -52,8 +52,8 @@ def resize_with_pad_to_square(image, scale_factors, out_sz, padding=(0,0,0)):
     # (or less than) the bbox height.
     b = (float(out_sz[0])-1) / (image.shape[0])
 
-    assert(scale_factors[0] * image.shape[0] <= out_sz[1])
-    assert(scale_factors[1] * image.shape[1] <= out_sz[0])
+    #assert(scale_factors[0] * image.shape[0] <= out_sz[1])
+    #assert(scale_factors[1] * image.shape[1] <= out_sz[0])
 
     scale = min(a, b)
 
