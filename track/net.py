@@ -39,8 +39,8 @@ class DCFNet(nn.Module):
         self.config = config
 
     def forward(self, x):
-        print self.feature(x).shape
-        print self.config.cos_window.shape
+        #print self.feature(x).shape
+        #print self.config.cos_window.shape
         #input()
         x = self.feature(x) * self.config.cos_window
         xf = torch.rfft(x, signal_ndim=2)
@@ -52,14 +52,14 @@ class DCFNet(nn.Module):
         return response
 
     def update(self, z, lr=1.):
-        print self.feature(z).shape
-        print self.config.cos_window.shape
+        #print self.feature(z).shape
+        #print self.config.cos_window.shape
         #input()
         z = self.feature(z) * self.config.cos_window
         zf = torch.rfft(z, signal_ndim=2)
         kzzf = torch.sum(torch.sum(zf ** 2, dim=4, keepdim=True), dim=1, keepdim=True)
-        print "self.config.yf.shape:", self.config.yf.shape
-        print "kzzf.shape:", kzzf.shape
+        #print "self.config.yf.shape:", self.config.yf.shape
+        #print "kzzf.shape:", kzzf.shape
         #input()
         alphaf = self.config.yf / (kzzf + self.config.lambda0)
         if lr > 0.99:

@@ -52,8 +52,12 @@ def resize_with_pad_to_square(image, scale_factors, out_sz, padding=(0,0,0)):
     # (or less than) the bbox height.
     b = (float(out_sz[0])-1) / (image.shape[0])
 
-    assert(scale_factors[0] * image.shape[0] <= out_sz[1])
-    assert(scale_factors[1] * image.shape[1] <= out_sz[0])
+    assert int(scale_factors[0] * image.shape[0]) <= out_sz[1], \
+           "scale_factors[0] * image.shape[0] ({} * {} = {}) is not less than or equal to out_sz[1] ({})".format(
+           scale_factors[0], image.shape[0], scale_factors[0] * image.shape[0], out_sz[1])
+    assert int(scale_factors[1] * image.shape[1]) <= out_sz[0], \
+           "scale_factors[1] * image.shape[1] ({} * {} = {}) is not less than or equal to out_sz[0] ({})".format(
+           scale_factors[1], image.shape[1], scale_factors[1] * image.shape[1], out_sz[0])
 
     scale = min(a, b)
 
@@ -79,8 +83,12 @@ def reverse_resize(image, scale_factors, out_sz, padding=(0,0,0)):
     # (or less than) the bbox height.
     #b = (float(out_sz[0])-1) / (image.shape[0])
 
-    assert((1.0 / scale_factors[0]) * image.shape[0] <= out_sz[1])
-    assert((1.0 / scale_factors[1]) * image.shape[1] <= out_sz[0])
+    assert (1.0 / scale_factors[0]) * image.shape[0] <= out_sz[1], \
+           "(1.0 / scale_factors[0]) * image.shape[0] ((1.0 / {}) * {} = {}) is not less than or equal to out_sz[1] ({})".format(
+           scale_factors[1], image.shape[1], (1.0 / scale_factors[0]) * image.shape[0], out_sz[0])
+    assert (1.0 / scale_factors[1]) * image.shape[1] <= out_sz[0], \
+           "(1.0 / scale_factors[1]) * image.shape[1] ((1.0 / {}) * {} = {}) is not less than or equal to out_sz[0] ({})".format(
+           scale_factors[1], image.shape[1], (1.0 / scale_factors[1]) * image.shape[1], out_sz[0])
 
     #scale = min(a, b)
 
@@ -106,8 +114,12 @@ def resize_with_pad_to_square_centered(image, scale_factors, out_sz, padding=(0,
     # (or less than) the bbox height.
     b = (float(out_sz[0])-1) / (image.shape[0])
 
-    assert(scale_factors[0] * image.shape[0] <= out_sz[1])
-    assert(scale_factors[1] * image.shape[1] <= out_sz[0])
+    assert int(scale_factors[0] * image.shape[0]) <= out_sz[1], \
+           "scale_factors[0] * image.shape[0] ({} * {} = {}) is not less than or equal to out_sz[1] ({})".format(
+            scale_factors[0], image.shape[0], scale_factors[0] * image.shape[0], out_sz[1])
+    assert int(scale_factors[1] * image.shape[1]) <= out_sz[0], \
+           "scale_factors[1] * image.shape[1] ({} * {} = {}) is not less than or equal to out_sz[0] ({})".format(
+            scale_factors[1], image.shape[1], scale_factors[1] * image.shape[1], out_sz[0])
 
     scale = min(a, b)
 
@@ -118,10 +130,9 @@ def resize_with_pad_to_square_centered(image, scale_factors, out_sz, padding=(0,
     #c = -a * bbox[0]
     #c = 0
 
-    print "scale:", out_sz
-    print "out_sz:", out_sz
-    print "image.shape:", image.shape
-
+    #print "scale:", out_sz
+    #print "out_sz:", out_sz
+    #print "image.shape:", image.shape
 
     c = (out_sz[0] / 2) - ((image.shape[1] * scale_factors[1])  / 2)
     #d = -b * bbox[1]
@@ -138,14 +149,14 @@ def pad_to_size_centered(image, out_sz, padding=(0,0,0)):
 
     img_t = np.transpose(image, (1, 2, 0))
 
-    print img_t.shape
+    #print img_t.shape
 
     #c = -a * bbox[0]
     c = (out_sz[0] / 2) - (img_t.shape[1]  / 2)
     #d = -b * bbox[1]
     d = (out_sz[1] / 2) - (img_t.shape[0]  / 2)
 
-    print "c:", c, ", d:", d
+    #print "c:", c, ", d:", d
 
     mapping = np.array([[1, 0, c],
                         [0, 1, d]]).astype(np.float)
