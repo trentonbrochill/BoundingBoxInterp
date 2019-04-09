@@ -16,6 +16,9 @@ from util import *
 from net import DCFNet
 from eval_otb import eval_auc
 
+SKIPPED_RETURN_VALUE = "Skipped"
+SUCCESS_RETURN_VALUE = "Success"
+
 def apply_matplotlib_colormap(image, cmap=plt.get_cmap('viridis')):
 
     assert image.dtype == np.uint8, 'must be np.uint8 image'
@@ -69,9 +72,22 @@ class TrackerConfig(object):
     output_sigma = max(crop_sz) / (1 + padding) * output_sigma_factor
     y = gaussian_shaped_labels(output_sigma, net_input_size)
     yf = torch.rfft(torch.Tensor(y).view(1, 1, crop_sz[1], crop_sz[0]).cuda(), signal_ndim=2)
-    print "np.outer(np.hanning(crop_sz[0]), np.hanning(crop_sz[1])).shape:", np.outer(np.hanning(crop_sz[0]), np.hanning(crop_sz[1])).shape
-    #input()
     cos_window = torch.Tensor(np.outer(np.hanning(crop_sz[1]), np.hanning(crop_sz[0]))).cuda()
+
+    def __init__(self, square_crop_size_side=720):
+        self.square_crop_side_size = square_crop_size_side
+        self.crop_sz = (self.square_crop_side_size, self.square_crop_side_size)
+
+        self.net_input_size = [self.crop_sz[0], self.crop_sz[1]]
+        self.net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
+        self.output_sigma = 900 / (1 + self.padding) * self.output_sigma_factor
+        #self.output_sigma = max(self.crop_sz) / (1 + self.padding) * self.output_sigma_factor
+        self.y = gaussian_shaped_labels(self.output_sigma, self.net_input_size)
+        cv2.imshow("gaussian_shaped_labels", self.y)
+        self.yf = torch.rfft(torch.Tensor(self.y).view(1, 1, self.crop_sz[1], self.crop_sz[0]).cuda(), signal_ndim=2)
+        #print "np.outer(np.hanning(self.crop_sz[0]), np.hanning(self.crop_sz[1])).shape:", np.outer(np.hanning(self.crop_sz[0]), np.hanning(self.crop_sz[1])).shape
+        #input()
+        self.cos_window = torch.Tensor(np.outer(np.hanning(self.crop_sz[1]), np.hanning(self.crop_sz[0]))).cuda()
 
 
 class DCFNetTraker(object):
@@ -165,24 +181,17 @@ def to_heatmap(im):
 
 def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_images, scale_factor_pair, 
                                                    target_image_index, target_groundtruth_bb, output_folder):
+    #scale_factor_pair = [1,1]
     output_folder_heatmap_dir = os.path.join(output_folder, "heatmap_images")
     output_folder_data_dir = os.path.join(output_folder, "heatmap_data")
     mkdir_p(output_folder_heatmap_dir)
     mkdir_p(output_folder_data_dir)
 
-    print "scale_factor_pair:", scale_factor_pair
-
     use_gpu = True
-    visualization = True
+    visualization = False
 
     lowest_min = 100
     highest_max = -100
-
-    # default parameter and load feature extractor network
-    config = TrackerConfig()
-    net = DCFNet(config)
-    net.load_param(args.model)
-    net.eval().cuda()
 
     init_rect = np.array(target_groundtruth_bb).astype(np.float)
     image_files = [os.path.join(input_video_folder, "img", "{:04}.png".format(img_num + 1)) 
@@ -194,6 +203,26 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
 
     im = cv2.imread(image_files[target_image_index])  # HxWxC
+
+    # Create default parameters structure
+    print "Scale factor pair:", scale_factor_pair
+
+
+    # Determine the appropriate output square size of the patch for this scale factor pair
+    output_square_size = int(max(scale_factor_pair[1] * im.shape[1], scale_factor_pair[0] * im.shape[0]))
+
+    if output_square_size >= 1300:
+        print "Skipping scale factor pair {} because it requires too large of a scaled image".format(scale_factor_pair)
+        return SKIPPED_RETURN_VALUE
+
+    #print output_square_size
+
+    # load feature extractor network
+    config = TrackerConfig(output_square_size)
+    net = DCFNet(config)
+    net.load_param(args.model)
+    net.eval().cuda()
+   
     #print image_files[0]
     #input()
     # confine results
@@ -201,7 +230,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     max_sz = np.minimum(im.shape[:2], config.max_scale_factor * target_sz)
 
     # crop template
-    print im.shape
+    #print im.shape
     #input()
     window_sz = target_sz * (1 + config.padding)
     bbox = cxy_wh_2_bbox(target_pos, window_sz)
@@ -253,12 +282,13 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         uint16_response = rearrangeMolecules(normalize_to_uint16(np_response[0]).transpose(1,2,0))
         cropped_size = (int(scale_factor_pair[0] * im.shape[0]), int(scale_factor_pair[1] * im.shape[1]))
         cropped_uint16_response = uint16_response[:cropped_size[0], :cropped_size[1], :]
-        unwarped_uint16_response = reverse_resize(cropped_uint16_response, scale_factor_pair, (720,480))
+
+        unwarped_uint16_response = reverse_resize(cropped_uint16_response, scale_factor_pair, (im.shape[1], im.shape[0]))
         
         reponse_heatmap = to_heatmap(rearrangeMolecules(normalize_to_255(np_response[0]).transpose(1,2,0)))
         cropped_size = (int(scale_factor_pair[0] * im.shape[0]), int(scale_factor_pair[1] * im.shape[1]))
         cropped_heatmap = reponse_heatmap[:cropped_size[0], :cropped_size[1], :]
-        unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (720,480))
+        unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (im.shape[1], im.shape[0]))
         
         cv2.imwrite(os.path.join(output_folder_data_dir, "{:04}.png".format(f)), unwarped_uint16_response)
         cv2.imwrite(os.path.join(output_folder_heatmap_dir, "{:04}.png".format(f)), unwarped_heatmap)
@@ -273,11 +303,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             im0 = rearrangeMolecules(np_response[0].transpose(1,2,0)) * 5
             lowest_min = lowest_min if lowest_min < np.min(np_response) else np.min(np_response)
             highest_max = highest_max if highest_max > np.max(np_response) else np.max(np_response)
-            print "lowest_min", lowest_min
-            print "highest_max", highest_max
             normalized_im0 = normalize_to_255(im0)
-            print "normalized min", np.min(normalized_im0)
-            print "normalized max", np.max(normalized_im0)
             #im0_heat = cv2.applyColorMap(((im0 - np.min(im0)) / (np.max(im0) - np.min(im0)) * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
             #cv2.imshow("heat", im0_heat)
             #assert(abs(np.max(im0)) + abs(np.min(im0)) < 1.0)
@@ -293,14 +319,14 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             two_d_responses2 = np.vstack([np.hstack(rearranged_responses2[i*config.axis_num_scale:(i+1)*config.axis_num_scale, :])
                                                                             for i in range(config.axis_num_scale)])
 
-            print "np_response.shape:", np_response.shape
+            #print "np_response.shape:", np_response.shape
             
             #input()
             reponse_heatmap = to_heatmap(rearrangeMolecules(normalize_to_255(np_response[0]).transpose(1,2,0)))
             cropped_size = (int(scale_factor_pair[0] * im.shape[0]), int(scale_factor_pair[1] * im.shape[1]))
-            print "reponse_heatmap.shape:", reponse_heatmap.shape
+            #print "reponse_heatmap.shape:", reponse_heatmap.shape
             cropped_heatmap = reponse_heatmap[:cropped_size[0], :cropped_size[1], :]
-            unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (720,480))
+            unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (im.shape[1], im.shape[0]))
             cv2.imshow("cropped", cropped_heatmap)
             cv2.imshow("unwarped", unwarped_heatmap)
 
@@ -312,7 +338,6 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             #to_display = np.vstack([np.hstack(transposed_searches), np.hstack(rearranged_responses)])
             cv2.imshow("i", two_d_searches)
             cv2.imshow("o2", two_d_responses2)
-            print "two_d_responses2.shape:", two_d_responses2.shape 
             cv2.imshow("o", two_d_responses)
             #for index,scaleValue in enumerate(config.scale_factor):
             #    cv2.imshow("i {} {:.2f}".format(index,scaleValue), search[index].transpose(1,2,0) * 5)
@@ -385,6 +410,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     #with open(result_path, 'w') as f:
     #    for x in res:
     #        f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
+    return SUCCESS_RETURN_VALUE
 
 
 def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
@@ -415,20 +441,25 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
             gt_bb = groundtruth_bbs[target_image_index]
 
 
-            print "gt_bb:", gt_bb
+            print "Ground truth bounding box for target image index {}:".format(target_image_index), gt_bb
+            print "Target bounding box size: h={}, w={}".format(target_bb_h, target_bb_w)
 
-            gt_bb_w = abs(gt_bb[2]-gt_bb[0])
-            gt_bb_h = abs(gt_bb[3]-gt_bb[1])
-            scale_factor_y = float(target_bb_h) / float(gt_bb_h)
-            scale_factor_x = float(target_bb_w) / float(gt_bb_w)
+            gt_bb_w = gt_bb[2]
+            gt_bb_h = gt_bb[3]
+            scale_factor_y =  float(gt_bb_h) / float(target_bb_h)
+            scale_factor_x =  float(gt_bb_w) / float(target_bb_w)
 
-            generate_heatmap_for_specific_target_and_scale(input_video_folder=input_video_folder,
-                                                           num_images=num_images,
-                                                           scale_factor_pair=(scale_factor_y, scale_factor_x),
-                                                           target_image_index=target_image_index,
-                                                           target_groundtruth_bb=gt_bb,
-                                                           output_folder=target_image_output_dir)
+            result = generate_heatmap_for_specific_target_and_scale(input_video_folder=input_video_folder,
+                                                                    num_images=num_images,
+                                                                    scale_factor_pair=(scale_factor_y, scale_factor_x),
+                                                                    target_image_index=target_image_index,
+                                                                    target_groundtruth_bb=gt_bb,
+                                                                    output_folder=target_image_output_dir)
     
+            if result == SKIPPED_RETURN_VALUE:
+                print "Bounding box height={} and width={} skipped for target image index {}".format(target_bb_h,
+                                                                                                     target_bb_w,
+                                                                                                     target_image_index)
 
 if __name__ == '__main__':
     # base dataset path and setting
@@ -448,6 +479,15 @@ if __name__ == '__main__':
     #annos = json.load(open(json_path, 'r'))
     #videos = sorted(annos.keys())
 
+    min_bb_side_size = 20
+    max_bb_side_size = 275
+    bb_side_size_step = 5
+
+    num_bb_side_sizes = int((max_bb_side_size - min_bb_side_size) / bb_side_size_step) + 1
+    bb_side_sizes = (np.arange(num_bb_side_sizes) * bb_side_size_step) + min_bb_side_size
+    bb_hw_pairs = [np.array((bb_side_sizes[i / num_bb_side_sizes], bb_side_sizes[i % num_bb_side_sizes]))
+                          for i in range(num_bb_side_sizes ** 2)]
+
     abs_dataset_folder = os.path.realpath(args.dataset_folder)
     abs_output_folder = os.path.realpath(args.output_folder)
     print "abs_dataset_folder:", abs_dataset_folder
@@ -460,8 +500,10 @@ if __name__ == '__main__':
 
         output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
         generate_heatmaps_for_video(input_video_folder=input_video_folder,
-                                    bb_hw_pairs=[(300,300)],
+                                    bb_hw_pairs=bb_hw_pairs,
                                     output_folder=output_dir_for_this_video)
+
+        #(1, 1), 
 
     sys.exit(0)
 
