@@ -182,10 +182,6 @@ def to_heatmap(im):
 def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_images, scale_factor_pair, 
                                                    target_image_index, target_groundtruth_bb, output_folder):
     #scale_factor_pair = [1,1]
-    output_folder_heatmap_dir = os.path.join(output_folder, "heatmap_images")
-    output_folder_data_dir = os.path.join(output_folder, "heatmap_data")
-    mkdir_p(output_folder_heatmap_dir)
-    mkdir_p(output_folder_data_dir)
 
     use_gpu = True
     visualization = False
@@ -205,8 +201,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     im = cv2.imread(image_files[target_image_index])  # HxWxC
 
     # Create default parameters structure
-    print "Scale factor pair:", scale_factor_pair
-
+    
 
     # Determine the appropriate output square size of the patch for this scale factor pair
     output_square_size = int(max(scale_factor_pair[1] * im.shape[1], scale_factor_pair[0] * im.shape[0]))
@@ -214,8 +209,14 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     if output_square_size >= 1300:
         print "Skipping scale factor pair {} because it requires too large of a scaled image".format(scale_factor_pair)
         return SKIPPED_RETURN_VALUE
+    else:
+        print "Generating heatmap for scale factor pair {} and target index {}".format(scale_factor_pair,
+                                                                                       target_image_index)
 
-    #print output_square_size
+    output_folder_heatmap_dir = os.path.join(output_folder, "heatmap_images")
+    output_folder_data_dir = os.path.join(output_folder, "heatmap_data")
+    mkdir_p(output_folder_heatmap_dir)
+    mkdir_p(output_folder_data_dir)
 
     # load feature extractor network
     config = TrackerConfig(output_square_size)
@@ -254,7 +255,11 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
 
     res = [cxy_wh_2_rect1(target_pos, target_sz)]  # save in .txt
     patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
-    for f in range(1, n_images):  # track
+    for f in range(n_images):  # track
+        # Skip the target index
+        #if f == target_image_index:
+        #    continue
+
         im = cv2.imread(image_files[f])
         #print config.scale_factor
 
@@ -290,8 +295,8 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         cropped_heatmap = reponse_heatmap[:cropped_size[0], :cropped_size[1], :]
         unwarped_heatmap = reverse_resize(cropped_heatmap, scale_factor_pair, (im.shape[1], im.shape[0]))
         
-        cv2.imwrite(os.path.join(output_folder_data_dir, "{:04}.png".format(f)), unwarped_uint16_response)
-        cv2.imwrite(os.path.join(output_folder_heatmap_dir, "{:04}.png".format(f)), unwarped_heatmap)
+        cv2.imwrite(os.path.join(output_folder_data_dir, "{:04}.png".format(f + 1)), unwarped_uint16_response)
+        cv2.imwrite(os.path.join(output_folder_heatmap_dir, "{:04}.png".format(f + 1)), unwarped_heatmap)
 
         if visualization:
       #      im0 = rearrangeMolecules(im0)
@@ -441,7 +446,7 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
             gt_bb = groundtruth_bbs[target_image_index]
 
 
-            print "Ground truth bounding box for target image index {}:".format(target_image_index), gt_bb
+            print "\nGround truth bounding box for target image index {}:".format(target_image_index), gt_bb
             print "Target bounding box size: h={}, w={}".format(target_bb_h, target_bb_w)
 
             gt_bb_w = gt_bb[2]
