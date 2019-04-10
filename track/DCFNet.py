@@ -484,29 +484,33 @@ if __name__ == '__main__':
     #annos = json.load(open(json_path, 'r'))
     #videos = sorted(annos.keys())
 
-    min_bb_side_size = 20
-    max_bb_side_size = 275
-    bb_side_size_step = 5
+    import multiprocessing
+    torch.set_num_threads(multiprocessing.cpu_count() - 1)
 
-    num_bb_side_sizes = int((max_bb_side_size - min_bb_side_size) / bb_side_size_step) + 1
-    bb_side_sizes = (np.arange(num_bb_side_sizes) * bb_side_size_step) + min_bb_side_size
-    bb_hw_pairs = [np.array((bb_side_sizes[i / num_bb_side_sizes], bb_side_sizes[i % num_bb_side_sizes]))
-                          for i in range(num_bb_side_sizes ** 2)]
+    for max_bb_side_size in [150, 200, 275]:
+        min_bb_side_size = 20
+        #max_bb_side_size = 150 #275
+        bb_side_size_step = 5
 
-    abs_dataset_folder = os.path.realpath(args.dataset_folder)
-    abs_output_folder = os.path.realpath(args.output_folder)
-    print "abs_dataset_folder:", abs_dataset_folder
-    for dir_entry in os.listdir(abs_dataset_folder):
-        input_video_folder = os.path.join(abs_dataset_folder, dir_entry)
-        print "dir_entry:", dir_entry
-        if not os.path.isdir(input_video_folder):
-            print "not directory:", dir_entry
-            continue
+        num_bb_side_sizes = int((max_bb_side_size - min_bb_side_size) / bb_side_size_step) + 1
+        bb_side_sizes = (np.arange(num_bb_side_sizes) * bb_side_size_step) + min_bb_side_size
+        bb_hw_pairs = [np.array((bb_side_sizes[i / num_bb_side_sizes], bb_side_sizes[i % num_bb_side_sizes]))
+                              for i in range(num_bb_side_sizes ** 2)]
 
-        output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
-        generate_heatmaps_for_video(input_video_folder=input_video_folder,
-                                    bb_hw_pairs=bb_hw_pairs,
-                                    output_folder=output_dir_for_this_video)
+        abs_dataset_folder = os.path.realpath(args.dataset_folder)
+        abs_output_folder = os.path.realpath(args.output_folder)
+        print "abs_dataset_folder:", abs_dataset_folder
+        for dir_entry in os.listdir(abs_dataset_folder):
+            input_video_folder = os.path.join(abs_dataset_folder, dir_entry)
+            print "dir_entry:", dir_entry
+            if not os.path.isdir(input_video_folder):
+                print "not directory:", dir_entry
+                continue
+
+            output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
+            generate_heatmaps_for_video(input_video_folder=input_video_folder,
+                                        bb_hw_pairs=bb_hw_pairs,
+                                        output_folder=output_dir_for_this_video)
 
         #(1, 1), 
 
