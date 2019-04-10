@@ -273,7 +273,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     #transposed_patch = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
     
     if save_debug_images:
-        cv2.imwrite(os.path.join(output_patch_dir, "patch.png"), patch.transpose(1,2,0) / 255.0)
+        cv2.imwrite(os.path.join(output_patch_dir, "patch.png"), patch.transpose(1,2,0))
     
     if visualization:
         cv2.imshow("patch", (patch.transpose(1,2,0) / 255.0))
@@ -321,7 +321,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         
         if save_debug_images:
             cv2.imwrite(os.path.join(output_patch_crop_dir, "{:04}.png".format(f + 1)),
-                        patch_crop[0, :].transpose(1,2,0) / 255.0)
+                        patch_crop[0, :].transpose(1,2,0))
         
         if not all_heatmaps_exist:
             search = patch_crop - config.net_average_image
