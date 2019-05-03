@@ -7,9 +7,8 @@ from . import log_utils
 from . import interpolation_strategy
 
 
-# TODO: Tune this value. The error is the sum of the Euclidean distance between the respective corners of the estimated
-#  and ground truth bounding boxes. I pulled this number out of my ass.
-MOST_ERROR_THRESHOLD_FOR_RECURSION_EXIT = 50
+# Error is (1 - IOU)
+MOST_ERROR_THRESHOLD_FOR_RECURSION_EXIT = 0.1
 
 
 def generate_bb_and_determine_num_adjustments(frames: typing.Sequence[log_utils.LogFrame],

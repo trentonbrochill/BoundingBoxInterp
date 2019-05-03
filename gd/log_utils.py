@@ -77,6 +77,18 @@ class BoundingBox:
         return XYTuple(x=self.center_x - (self.width // 2),
                        y=self.center_y - (self.height // 2))
 
+    def top(self) -> int:
+        return self.center_y + (self.height // 2)
+
+    def left(self) -> int:
+        return self.center_x - (self.width // 2)
+
+    def right(self) -> int:
+        return self.center_x + (self.width // 2)
+
+    def bottom(self) -> int:
+        return self.center_y - (self.height // 2)
+
     def get_all_corners(self) -> typing.Tuple[XYTuple, XYTuple, XYTuple, XYTuple]:
         # top left, top right, bottom right, bottom left
         return self.top_left_corner(), self.top_right_corner(), self.bottom_right_corner(), self.bottom_left_corner()
@@ -129,11 +141,26 @@ class LogFrame:
         self.bb_is_ground_truth = False
 
     def bb_error(self) -> float:
+        """Calculate intersection over union error between the estimated and ground truth bounding boxes."""
         assert self.bb is not None, "Cannot calculate error on a frame whose bounding box has not been set"
         assert self.gt_bb is not None, "Frame's ground truth bounding box is None"
 
-        # The error is just the sum of the Euclidean distance between each corner
-        return scipy.spatial.distance.euclidean(self.bb.top_left_corner(), self.gt_bb.top_left_corner()) + \
-               scipy.spatial.distance.euclidean(self.bb.top_right_corner(), self.gt_bb.top_right_corner()) + \
-               scipy.spatial.distance.euclidean(self.bb.bottom_right_corner(), self.gt_bb.bottom_right_corner()) + \
-               scipy.spatial.distance.euclidean(self.bb.bottom_left_corner(), self.gt_bb.bottom_left_corner())
+        # Determine the (x, y)-coordinates of the intersection rectangle
+        intersect_right = min(self.bb.right(), self.gt_bb.right())
+        intersect_left = max(self.bb.left(), self.gt_bb.left())
+        intersect_top = min(self.bb.top(), self.gt_bb.top())
+        intersect_bottom = max(self.bb.bottom(), self.gt_bb.bottom())
+
+        # Compute the area of intersection rectangle
+        intersect_area = max(0, intersect_right - intersect_left + 1) * max(0, intersect_top - intersect_bottom + 1)
+
+        # Compute the area of both the prediction and ground-truth rectangles
+        gt_bb_area = self.gt_bb.get_height() * self.gt_bb.get_width()
+        bb_area = self.bb.get_height() * self.bb.get_width()
+
+        # Compute the intersection over union by taking the intersection area and dividing it by the sum of
+        # prediction + ground-truth areas - the intersection area
+        iou = intersect_area / float(gt_bb_area + bb_area - intersect_area)
+
+        # Return the error based on the intersection over union value
+        return 1 - iou
