@@ -167,12 +167,21 @@ def rearrangeMolecules(im):
     return np.vstack([np.hstack([im[im_h/2:im_h,im_w/2:im_w,:],im[im_h/2:im_h,0:im_w/2,:]]),np.hstack([im[0:im_h/2,im_w/2:im_w,:],im[0:im_h/2,0:im_w/2,:]])])
 
 
+def normalize_to_np_int(im, old_range, np_int_type):
+    # (im - min_old) * ((max_new - min_new) / (max_old - min_old)) + min_new
+    clipped_im = np.clip(im, old_range[0], old_range[1])
+    np_type_info = np.iinfo(np_int_type)
+    new_range = [np_type_info.min, np_type_info.max]
+    range_scaling_factor = ((new_range[1] - new_range[0]) / (old_range[1] - old_range[0]))
+    return (((clipped_im - old_range[0]) * range_scaling_factor) + new_range[0]).astype(np_int_type)
+
+
 def normalize_to_255(im):
-    return (((im * 2.0) + 1.0) / 2.0 * 255.0).astype(np.uint8)
+    return normalize_to_np_int(im, [-1.0, 1.0], np.uint8)
 
 
 def normalize_to_uint16(im):
-    return (((im * 2.0) + 1.0) / 2.0 * 65535.0).astype(np.uint16)
+    return normalize_to_np_int(im, [-1.0, 1.0], np.uint16)
 
 
 def to_heatmap(im):
