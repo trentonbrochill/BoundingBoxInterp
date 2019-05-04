@@ -23,11 +23,16 @@ TARGET_IMAGE_DIRECTORY_REGEX = re.compile(r"target_image_([0-9]+)")
 FRAME_FILE_REGEX = re.compile(r"([0-9]+)\.[pP][nN][gG]")
 
 
+total_number_of_adjustments = 0
+
+
 def generate_bb_and_determine_num_adjustments(all_frames: typing.Sequence[log_utils.LogFrame],
-                                              this_iteration_number: int,
+                                              split_depth: int,
                                               json_dict: dict,
                                               frames_in_use: typing.Sequence[log_utils.LogFrame],
                                               interp_strat: interpolation_strategy.InterpolationStrategyFunction) -> int:
+    global total_number_of_adjustments
+
     # Set the first and last frames to use ground truth
     frames_in_use[0].set_to_ground_truth()
     frames_in_use[-1].set_to_ground_truth()
@@ -47,7 +52,9 @@ def generate_bb_and_determine_num_adjustments(all_frames: typing.Sequence[log_ut
             most_erroneous_index = index
 
     # Store the intermediate results after this iteration
-    this_iteration_json_dict = {"iteration_number": this_iteration_number, "all_frames_estimated_bbs": []}
+    this_iteration_json_dict = {"split_depth": split_depth,
+                                "total_number_of_adjustments": total_number_of_adjustments,
+                                "all_frames_estimated_bbs": []}
     for frame in all_frames:
         this_iteration_json_dict["all_frames_estimated_bbs"].append(frame.to_json_dict())
 
@@ -61,18 +68,19 @@ def generate_bb_and_determine_num_adjustments(all_frames: typing.Sequence[log_ut
 
     # The "labeler" needs to adjust the most erroneous frame
     num_adjustments = 1
+    total_number_of_adjustments += 1
 
     # Otherwise, set bb of most erroneous frame to ground truth bb for that frame
     frames_with_bbs[most_erroneous_index].set_to_ground_truth()
 
     # Now split and redo interpolation on either side
     num_adjustments += generate_bb_and_determine_num_adjustments(all_frames=all_frames,
-                                                                 this_iteration_number=this_iteration_number + 1,
+                                                                 split_depth=split_depth + 1,
                                                                  json_dict=json_dict,
                                                                  frames_in_use=frames_with_bbs[0:most_erroneous_index + 1],
                                                                  interp_strat=interp_strat)
     num_adjustments += generate_bb_and_determine_num_adjustments(all_frames=all_frames,
-                                                                 this_iteration_number=this_iteration_number + 1,
+                                                                 split_depth=split_depth + 1,
                                                                  json_dict=json_dict,
                                                                  frames_in_use=frames_with_bbs[most_erroneous_index:-1],
                                                                  interp_strat=interp_strat)
@@ -184,6 +192,8 @@ def get_per_frame_image_paths(input_image_dir_path: pathlib.Path) -> typing.Dict
 
 
 def main():
+    global total_number_of_adjustments
+
     parser = argparse.ArgumentParser(description='Generate bounding boxes using gradient descent '
                                                  'or linear interpolation')
     parser.add_argument('--video_input_folder', metavar='FOLDER', required=True,
@@ -228,8 +238,9 @@ def main():
     }
 
     # Do linear interpolation first
+    total_number_of_adjustments = 0
     lin_splits = generate_bb_and_determine_num_adjustments(all_frames=all_frames,
-                                                           this_iteration_number=0,
+                                                           split_depth=0,
                                                            json_dict=output_json_dict["linear_interpolation"],
                                                            frames_in_use=all_frames,
                                                            interp_strat=interpolation_strategy.linear_interpolation_generate_bounding_boxes)
@@ -241,8 +252,9 @@ def main():
         frame.clear_bb()
 
     # Then do gradient descent interpolation
+    total_number_of_adjustments = 0
     gd_splits = generate_bb_and_determine_num_adjustments(all_frames=all_frames,
-                                                          this_iteration_number=0,
+                                                          split_depth=0,
                                                           json_dict=output_json_dict["gradient_descent_interpolation"],
                                                           frames_in_use=all_frames,
                                                           interp_strat=interpolation_strategy.gradient_descent_generate_bounding_boxes)
