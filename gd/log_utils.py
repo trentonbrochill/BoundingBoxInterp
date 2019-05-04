@@ -1,11 +1,16 @@
+import pathlib.Path
 import typing
 
-import scipy.spatial.distance
+import cv2
+import numpy as np
+
+
+NumericType = typing.Union[int, float]
 
 
 class XYTuple(typing.NamedTuple):
-    x: typing.Union[int, float]
-    y: typing.Union[int, float]
+    x: NumericType
+    y: NumericType
 
     def __sub__(self, other):
         if isinstance(other, XYTuple):
@@ -44,7 +49,7 @@ class XYTuple(typing.NamedTuple):
 
 
 class BoundingBox:
-    def __init__(self, center_x: int, center_y: int, width: int, height: int):
+    def __init__(self, center_x: NumericType, center_y: NumericType, width: NumericType, height: NumericType):
         self.center_x = center_x
         self.center_y = center_y
         self.width = width
@@ -55,8 +60,8 @@ class BoundingBox:
                      top_right: XYTuple,
                      bottom_left: XYTuple,
                      bottom_right: XYTuple):
-        center_x = int(round((top_left.x + top_right.x) / 2))
-        center_y = int(round((top_left.y + bottom_left.y) / 2))
+        center_x = round((top_left.x + top_right.x) / 2)
+        center_y = round((top_left.y + bottom_left.y) / 2)
         width = bottom_right.x - bottom_left.x
         height = top_right.y - bottom_right.y
         return BoundingBox(center_x, center_y, width, height)
@@ -77,17 +82,17 @@ class BoundingBox:
         return XYTuple(x=self.center_x - (self.width // 2),
                        y=self.center_y - (self.height // 2))
 
-    def top(self) -> int:
-        return self.center_y + (self.height // 2)
+    def top(self) -> NumericType:
+        return self.center_y + (self.height / 2)
 
-    def left(self) -> int:
-        return self.center_x - (self.width // 2)
+    def left(self) -> NumericType:
+        return self.center_x - (self.width / 2)
 
-    def right(self) -> int:
-        return self.center_x + (self.width // 2)
+    def right(self) -> NumericType:
+        return self.center_x + (self.width / 2)
 
-    def bottom(self) -> int:
-        return self.center_y - (self.height // 2)
+    def bottom(self) -> NumericType:
+        return self.center_y - (self.height / 2)
 
     def get_all_corners(self) -> typing.Tuple[XYTuple, XYTuple, XYTuple, XYTuple]:
         # top left, top right, bottom right, bottom left
@@ -97,28 +102,46 @@ class BoundingBox:
         return XYTuple(x=self.center_x,
                        y=self.center_y)
 
-    def get_width(self) -> int:
+    def get_width(self) -> NumericType:
         return self.width
 
-    def get_height(self) -> int:
+    def get_height(self) -> NumericType:
         return self.height
+
+    def to_list(self) -> typing.List[NumericType]:
+        return [self.center_x, self.center_y, self.width, self.height]
+
+
+class HeatmapConfiguration(typing.NamedTuple):
+    bb_height: int
+    bb_width: int
+    target_frame: int
+
+
+HeatmapPathDict = typing.Dict[HeatmapConfiguration, pathlib.Path]
 
 
 class LogFrame:
-    # TODO: We obviously don't want to (and probably can't) load all of the heatmaps at all scales, for every target
-    #  frame, for each frame in the log. We'll need to figure out the best way to store the heatmap locations in this
-    #  object, which will depend on how we end up using the heatmaps in the gradient descent interpolation version.
-    #  Probably what I'll end up doing is storing some path in the heatmap variable, then provide some interface for
-    #  accessing heatmaps of this frame for a given target frame and scale and putting the implementation of that in
-    #  this class. Similarly, I can store the path of the image in |image|, then look it up if we end up using it. We
-    #  might not even end up using the image, or we may use it only for visualizing the computed bounding boxes.
-    def __init__(self, index, image, heatmap, ground_truth_bounding_box: BoundingBox):
-        self.index = index
-        self.image = image
-        self.heatmap = heatmap
+    def __init__(self,
+                 frame_number: int,
+                 image_path: pathlib.Path,
+                 heatmap_dict: HeatmapPathDict,
+                 ground_truth_bounding_box: BoundingBox):
+        self.num = frame_number
+        self.image_path = image_path
+        self.heatmap_path_dict = heatmap_dict
         self.gt_bb = ground_truth_bounding_box
         self.bb = None  # type: typing.Union[BoundingBox, None]
         self.bb_is_ground_truth = False
+
+    def has_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> bool:
+        return heatmap_config in self.heatmap_path_dict
+
+    def get_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> np.ndarray:
+        return cv2.imread(str(self.heatmap_path_dict[heatmap_config]))
+
+    def get_image(self) -> np.ndarray:
+        return cv2.imread(str(self.image_path))
 
     def set_bb(self, estimated_bb: BoundingBox):
         assert not self.bb_is_ground_truth, "A frame that is set to ground truth should not be given a bb estimate"
@@ -135,8 +158,7 @@ class LogFrame:
     def is_set_to_ground_truth(self) -> bool:
         return self.bb_is_ground_truth
 
-    def clear_being_set_to_ground_truth(self):
-        assert self.bb_is_ground_truth, "Cannot clear a frame not set to ground truth, from being set to ground truth"
+    def clear_bb(self):
         self.bb = None
         self.bb_is_ground_truth = False
 
@@ -164,3 +186,9 @@ class LogFrame:
 
         # Return the error based on the intersection over union value
         return 1 - iou
+
+    def is_correct(self, error_under_this_is_correct: NumericType) -> bool:
+        return self.bb_error() <= error_under_this_is_correct
+
+    def to_json_dict(self) -> dict:
+        return {"bb": self.bb.to_list(), "bb_err": self.bb_error()}
