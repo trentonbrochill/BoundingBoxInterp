@@ -150,6 +150,9 @@ class LogFrame:
     def get_bb(self) -> BoundingBox:
         return self.bb
 
+    def get_gt_bb(self) -> BoundingBox:
+        return self.gt_bb
+
     def set_to_ground_truth(self):
         if not self.bb_is_ground_truth:
             self.bb = self.gt_bb
@@ -191,4 +194,4 @@ class LogFrame:
         return self.bb_error() <= error_under_this_is_correct
 
     def to_json_dict(self) -> dict:
-        return {"bb": self.bb.to_list(), "bb_err": self.bb_error()}
+        return {"frame_num": self.num, "bb": self.bb.to_list(), "bb_err": self.bb_error()}
