@@ -18,6 +18,7 @@ from eval_otb import eval_auc
 
 SKIPPED_RETURN_VALUE = "Skipped"
 SUCCESS_RETURN_VALUE = "Success"
+TRACKER_CONFIG_PADDING = 1.5
 
 def apply_matplotlib_colormap(image, cmap=plt.get_cmap('viridis')):
 
@@ -47,7 +48,7 @@ class TrackerConfig(object):
     crop_sz = (square_crop_side_size, square_crop_side_size)
 
     lambda0 = 1e-4
-    padding = 1.5
+    padding = TRACKER_CONFIG_PADDING
     output_sigma_factor = 0.1
     interp_factor = 0.01
     axis_num_scale = 1
@@ -83,7 +84,6 @@ class TrackerConfig(object):
         self.output_sigma = 125 / (1 + self.padding) * self.output_sigma_factor
         #self.output_sigma = max(self.crop_sz) / (1 + self.padding) * self.output_sigma_factor
         self.y = gaussian_shaped_labels(self.output_sigma, self.net_input_size)
-        cv2.imshow("gaussian_shaped_labels", self.y)
         self.yf = torch.rfft(torch.Tensor(self.y).view(1, 1, self.crop_sz[1], self.crop_sz[0]).cuda(), signal_ndim=2)
         #print "np.outer(np.hanning(self.crop_sz[0]), np.hanning(self.crop_sz[1])).shape:", np.outer(np.hanning(self.crop_sz[0]), np.hanning(self.crop_sz[1])).shape
         #input()
@@ -194,6 +194,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
 
     use_gpu = True
     visualization = False
+    visualization_debug_scale = True
     save_debug_images = True
 
     lowest_min = 100
@@ -207,7 +208,6 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     tic = time.time()  # time start
 
     target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
-
     im = cv2.imread(image_files[target_image_index])  # HxWxC
 
     # Create default parameters structure
@@ -305,6 +305,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         #    continue
 
         im = cv2.imread(image_files[f])
+
         #print config.scale_factor
 
         #for i in range(config.num_scale):  # crop multi-scale search region
@@ -459,8 +460,21 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
 
             gt_bb_w = gt_bb[2]
             gt_bb_h = gt_bb[3]
-            scale_factor_y =  float(gt_bb_h) / float(target_bb_h)
-            scale_factor_x =  float(gt_bb_w) / float(target_bb_w)
+            im_w = 720
+            im_h = 480
+            patch_size = 125.0
+            bb_scale_factor_x = float(gt_bb_w) / float(target_bb_w)
+            bb_scale_factor_y = float(gt_bb_h) / float(target_bb_h)
+            crop_size = int(max(bb_scale_factor_x * im_w, bb_scale_factor_y, im_h))
+
+            #scale_factor_x = bb_scale_factor_x * ((patch_size - 1) / (float(1 + TRACKER_CONFIG_PADDING) * gt_bb_w))
+            #scale_factor_y = bb_scale_factor_y * ((patch_size - 1) / (float(1 + TRACKER_CONFIG_PADDING) * gt_bb_h))
+
+            #scale_factor_x =  ((crop_size - 1) * float(1 + TRACKER_CONFIG_PADDING) * gt_bb_w) / (im_w * (patch_size - 1))
+            #scale_factor_y =  ((crop_size - 1) * float(1 + TRACKER_CONFIG_PADDING) * gt_bb_h) / (im_h * (patch_size - 1))
+
+            scale_factor_x = patch_size / (target_bb_w * float(1.0 + TRACKER_CONFIG_PADDING))
+            scale_factor_y = patch_size / (target_bb_h * float(1.0 + TRACKER_CONFIG_PADDING))
 
             result = generate_heatmap_for_specific_target_and_scale(input_video_folder=input_video_folder,
                                                                     num_images=num_images,
@@ -495,8 +509,8 @@ if __name__ == '__main__':
     import multiprocessing
     torch.set_num_threads(multiprocessing.cpu_count() - 1)
 
-    for max_bb_side_size in [150, 200, 275]:
-        min_bb_side_size = 20
+    for max_bb_side_size in [150, 200, 275, 290]:
+        min_bb_side_size = 55
         #max_bb_side_size = 150 #275
         bb_side_size_step = 5
 
@@ -504,7 +518,7 @@ if __name__ == '__main__':
         bb_side_sizes = (np.arange(num_bb_side_sizes) * bb_side_size_step) + min_bb_side_size
         bb_hw_pairs = [np.array((bb_side_sizes[i / num_bb_side_sizes], bb_side_sizes[i % num_bb_side_sizes]))
                               for i in range(num_bb_side_sizes ** 2)]
-
+                              
         abs_dataset_folder = os.path.realpath(args.dataset_folder)
         abs_output_folder = os.path.realpath(args.output_folder)
         print "abs_dataset_folder:", abs_dataset_folder

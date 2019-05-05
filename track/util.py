@@ -13,6 +13,14 @@ def rect1_2_cxy_wh(rect):
 def cxy_wh_2_bbox(cxy, wh):
     return np.array([cxy[0]-wh[0]/2, cxy[1]-wh[1]/2, cxy[0]+wh[0]/2, cxy[1]+wh[1]/2])  # 0-index
 
+def bbox_2_cxy_wh(bbox):
+    rect = np.array([0, 0, 0, 0])
+    rect[0] = bbox[0]
+    rect[1] = bbox[1]
+    rect[2] = bbox[2] - bbox[0]
+    rect[3] = bbox[3] - bbox[1]
+    return np.array([rect[0]+rect[2]/2-1, rect[1]+rect[3]/2-1]), np.array([rect[2], rect[3]])  # 0-index
+
 
 def cxy_wh_2_bbox_w_h_separate(cxy, w, h):
     '''Center (x,y), width, and height to bounding box.
@@ -74,6 +82,36 @@ def resize_with_pad_to_square(image, scale_factors, out_sz, padding=(0,0,0)):
     crop = cv2.warpAffine(image, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
     return np.transpose(crop, (2, 0, 1))
 
+
+def resize_with_stretch_to_square(image, scale_factors, out_sz, padding=(0,0,0)):
+    a = float(out_sz[1]) / (image.shape[0] * scale_factors[0])
+    b = float(out_sz[0]) / (image.shape[1] * scale_factors[1])
+
+    mapping = np.array([[a, 0, 0],
+                        [0, b, 0]]).astype(np.float)
+    crop = cv2.warpAffine(image, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
+    return np.transpose(crop, (2, 0, 1))
+
+
+def resize(image, scale_factors, padding=(0,0,0)):
+    # 
+    #c = -a * bbox[0]
+    c = 0
+    #d = -b * bbox[1]
+    d = 0
+    mapping = np.array([[scale_factors[1],                0, 0],
+                        [               0, scale_factors[0], 0]]).astype(np.float)
+    crop = cv2.warpAffine(image, mapping, (int(scale_factors[1] * image.shape[1]), int(scale_factors[0] * image.shape[0])), borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
+    return crop  #np.transpose(crop, (2, 0, 1))
+
+
+def reverse_stretch_resize(image, scale_factors, out_sz, padding=(0,0,0)):
+    a = float(out_sz[1]) / (image.shape[0] * scale_factors[0])
+    b = float(out_sz[0]) / (image.shape[1] * scale_factors[1])
+    mapping = np.array([[1.0 / a,       0, 0],
+                        [      0, 1.0 / b, 0]]).astype(np.float)
+    crop = cv2.warpAffine(image, mapping, out_sz, borderMode=cv2.BORDER_CONSTANT, borderValue=padding)
+    return crop
 
 def reverse_resize(image, scale_factors, out_sz, padding=(0,0,0)):
     # (bbox[2] - bbox[0]) is the width of the bbox, so |a| is the factor by which the output width is greater than 
