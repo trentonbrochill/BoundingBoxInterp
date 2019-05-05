@@ -112,6 +112,19 @@ class BoundingBox:
     def to_list(self) -> typing.List[NumericType]:
         return [self.center_x, self.center_y, self.width, self.height]
 
+    def as_np_array(self) -> np.ndarray:
+        return np.array(self.to_list())
+
+    def __sub__(self, other):
+        if isinstance(other, BoundingBox):
+            return np.array([self.center_x - other.center_x,
+                             self.center_y - other.center_y,
+                             self.width - other.width,
+                             self.height - other.height])
+        else:
+            raise TypeError("Subtraction not support between these types: {} - {}".format(str(type(self)),
+                                                                                          str(type(other))))
+
 
 class HeatmapConfiguration(typing.NamedTuple):
     bb_height: int
@@ -143,10 +156,10 @@ class LogFrame:
         return cv2.imread(str(self.image_path))
 
     @staticmethod
-    def round_to_multiple_of_five(numeric_value: NumericValue) -> int:
+    def round_to_multiple_of_five(numeric_value: NumericType) -> int:
         return 5 * int(round(numeric_value / 5))
 
-    def get_cached_heatmap(self, bb_height: NumericType, bb_width: NumericType, target_frame: int) -> np.ndarray:
+    def _get_cached_heatmap(self, bb_height: NumericType, bb_width: NumericType, target_frame: int) -> np.ndarray:
         rounded_bb_height = LogFrame.round_to_multiple_of_five(bb_height)
         rounded_bb_width = LogFrame.round_to_multiple_of_five(bb_width)
         heatmap_config = HeatmapConfiguration(bb_height=rounded_bb_height,
@@ -154,7 +167,7 @@ class LogFrame:
                                               target_frame=target_frame)
  
         if heatmap_config not in self.heatmap_data_cache.keys():
-            self.heatmap_data_cache[start_heatmap_config] = self._get_heatmap_with_config(heatmap_config)
+            self.heatmap_data_cache[heatmap_config] = self._get_heatmap_with_config(heatmap_config)
 
         return self.heatmap_data_cache[heatmap_config]
 
@@ -164,11 +177,11 @@ class LogFrame:
                                 bb_width: NumericType,
                                 pixel_x: NumericType,
                                 pixel_y: NumericType) -> typing.Tuple[np.uint16, np.uint16]:
-        return (self.get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[pixel_x][pixel_y],
-                self.get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[pixel_x][pixel_y])
+        return (self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[pixel_x][pixel_y],
+                self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[pixel_x][pixel_y])
 
     def clear_heatmap_data_cache(self):
-        delete self.heatmap_data_cache
+        del self.heatmap_data_cache
         self.heatmap_data_cache = {}
 
     def get_number(self) -> int:
