@@ -73,7 +73,6 @@ class TrackerConfig(object):
     net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
     output_sigma = 125 / (1 + padding) * output_sigma_factor
     y = gaussian_shaped_labels(output_sigma, net_input_size)
-    cos_window = torch.Tensor(np.outer(np.hanning(crop_sz[1]), np.hanning(crop_sz[0]))).cuda(gpu_number)
 
     def __init__(self, square_crop_size_side=720, gpu_number=0):
         self.square_crop_side_size = square_crop_size_side
@@ -216,7 +215,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     # Determine the appropriate output square size of the patch for this scale factor pair
     output_square_size = int(max(scale_factor_pair[1] * im.shape[1], scale_factor_pair[0] * im.shape[0]))
 
-    if output_square_size >= 2000:
+    if output_square_size >= 1500:
         print "Skipping scale factor pair {} because it requires too large of a scaled image".format(scale_factor_pair)
         return SKIPPED_RETURN_VALUE
     else:
@@ -262,7 +261,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     # load feature extractor network
     config = TrackerConfig(output_square_size, gpu_number)
     net = DCFNet(config)
-    net.load_param(args.model)
+    net.load_param('param.pth')
     net.eval().cuda(gpu_number)
    
     #print image_files[0]
@@ -429,7 +428,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
 
 def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder, gpu_num):
 
-    print "Generating heatmaps: {}, {} -> {}".format(input_video_folder, bb_hw_pairs, output_folder)
+    #print "Generating heatmaps: {}, {} -> {}".format(input_video_folder, bb_hw_pairs, output_folder)
 
     # Read the ground truth bounding boxes for each image in this video
     with open(os.path.join(input_video_folder, "groundtruth_rect.txt"), 'r') as groundtruth_file:
@@ -469,7 +468,7 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder, 
                                                                     target_image_index=target_image_index,
                                                                     target_groundtruth_bb=gt_bb,
                                                                     output_folder=target_image_output_dir,
-                                                                    gpu_num=gpu_num)
+                                                                    gpu_number=gpu_num)
     
             if result == SKIPPED_RETURN_VALUE:
                 print "Bounding box height={} and width={} skipped for target image index {}".format(target_bb_h,
@@ -503,7 +502,7 @@ if __name__ == '__main__':
     torch.set_num_threads(int(multiprocessing.cpu_count() / args.num_parallel_on_this_machine))
 
     for max_bb_side_size in [290]:
-        min_bb_side_size = 20
+        min_bb_side_size = 40
         #max_bb_side_size = 150 #275
         bb_side_size_step = 5
 
@@ -514,7 +513,7 @@ if __name__ == '__main__':
         
         this_run_bb_hw_pairs = []
         for index, pair in enumerate(bb_hw_pairs):
-            if index % args.num_data_splits == args.num_data_split_to_use:
+            if index % args.num_data_splits == args.data_split_to_use:
                 this_run_bb_hw_pairs.append(pair)
 
         abs_dataset_folder = os.path.realpath(args.dataset_folder)
@@ -522,16 +521,16 @@ if __name__ == '__main__':
         print "abs_dataset_folder:", abs_dataset_folder
         for dir_entry in os.listdir(abs_dataset_folder):
             input_video_folder = os.path.join(abs_dataset_folder, dir_entry)
-            print "dir_entry:", dir_entry
+            #print "dir_entry:", dir_entry
             if not os.path.isdir(input_video_folder):
-                print "not directory:", dir_entry
+                #print "not directory:", dir_entry
                 continue
 
             output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
             generate_heatmaps_for_video(input_video_folder=input_video_folder,
                                         bb_hw_pairs=this_run_bb_hw_pairs,
                                         output_folder=output_dir_for_this_video,
-                                        gpu_num=gpu_num)
+                                        gpu_num=args.gpu_num)
 
         #(1, 1), 
 
