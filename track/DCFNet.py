@@ -7,6 +7,7 @@ import json
 import numpy as np
 import errno
 import torch
+import collections
 
 import math
 import cv2
@@ -72,8 +73,8 @@ class TrackerConfig(object):
     net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
     output_sigma = 125 / (1 + padding) * output_sigma_factor
     y = gaussian_shaped_labels(output_sigma, net_input_size)
-    yf = torch.rfft(torch.Tensor(y).view(1, 1, crop_sz[1], crop_sz[0]).cuda(), signal_ndim=2)
-    cos_window = torch.Tensor(np.outer(np.hanning(crop_sz[1]), np.hanning(crop_sz[0]))).cuda()
+    yf = torch.rfft(torch.Tensor(y).view(1, 1, crop_sz[1], crop_sz[0]).cuda(gpu_number), signal_ndim=2)
+    cos_window = torch.Tensor(np.outer(np.hanning(crop_sz[1]), np.hanning(crop_sz[0]))).cuda(gpu_number)
 
     def __init__(self, square_crop_size_side=720):
         self.square_crop_side_size = square_crop_size_side
@@ -84,10 +85,10 @@ class TrackerConfig(object):
         self.output_sigma = 125 / (1 + self.padding) * self.output_sigma_factor
         #self.output_sigma = max(self.crop_sz) / (1 + self.padding) * self.output_sigma_factor
         self.y = gaussian_shaped_labels(self.output_sigma, self.net_input_size)
-        self.yf = torch.rfft(torch.Tensor(self.y).view(1, 1, self.crop_sz[1], self.crop_sz[0]).cuda(), signal_ndim=2)
+        self.yf = torch.rfft(torch.Tensor(self.y).view(1, 1, self.crop_sz[1], self.crop_sz[0]).cuda(gpu_number), signal_ndim=2)
         #print "np.outer(np.hanning(self.crop_sz[0]), np.hanning(self.crop_sz[1])).shape:", np.outer(np.hanning(self.crop_sz[0]), np.hanning(self.crop_sz[1])).shape
         #input()
-        self.cos_window = torch.Tensor(np.outer(np.hanning(self.crop_sz[1]), np.hanning(self.crop_sz[0]))).cuda()
+        self.cos_window = torch.Tensor(np.outer(np.hanning(self.crop_sz[1]), np.hanning(self.crop_sz[0]))).cuda(gpu_number)
 
 
 class DCFNetTraker(object):
@@ -98,7 +99,7 @@ class DCFNetTraker(object):
         self.net.load_param(config.feature_path)
         self.net.eval()
         if gpu:
-            self.net.cuda()
+            self.net.cuda(gpu_number)
 
         # confine results
         target_pos, target_sz = rect1_2_cxy_wh(init_rect)
@@ -111,7 +112,7 @@ class DCFNetTraker(object):
         patch = crop_chw(im, bbox, self.config.crop_sz)
 
         target = patch - config.net_average_image
-        self.net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
+        self.net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(gpu_number))
         self.target_pos, self.target_sz = target_pos, target_sz
         self.patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)  # buff
 
@@ -124,7 +125,7 @@ class DCFNetTraker(object):
         search = self.patch_crop - self.config.net_average_image
 
         if self.gpu:
-            response = self.net(torch.Tensor(search).cuda())
+            response = self.net(torch.Tensor(search).cuda(gpu_number))
         else:
             response = self.net(torch.Tensor(search))
         peak, idx = torch.max(response.view(self.config.num_scale, -1), 1)
@@ -146,7 +147,7 @@ class DCFNetTraker(object):
         bbox = cxy_wh_2_bbox(self.target_pos, window_sz)
         patch = crop_chw(im, bbox, self.config.crop_sz)
         target = patch - self.config.net_average_image
-        self.net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=self.config.interp_factor)
+        self.net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(gpu_number), lr=self.config.interp_factor)
 
         return cxy_wh_2_rect1(self.target_pos, self.target_sz)  # 1-index
 
@@ -189,7 +190,7 @@ def to_heatmap(im):
 
 
 def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_images, scale_factor_pair, 
-                                                   target_image_index, target_groundtruth_bb, output_folder):
+                                                   target_image_index, target_groundtruth_bb, output_folder, gpu_number):
     #scale_factor_pair = [1,1]
 
     use_gpu = True
@@ -216,7 +217,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     # Determine the appropriate output square size of the patch for this scale factor pair
     output_square_size = int(max(scale_factor_pair[1] * im.shape[1], scale_factor_pair[0] * im.shape[0]))
 
-    if output_square_size >= 1400:
+    if output_square_size >= 2000:
         print "Skipping scale factor pair {} because it requires too large of a scaled image".format(scale_factor_pair)
         return SKIPPED_RETURN_VALUE
     else:
@@ -263,7 +264,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     config = TrackerConfig(output_square_size)
     net = DCFNet(config)
     net.load_param(args.model)
-    net.eval().cuda()
+    net.eval().cuda(gpu_number)
    
     #print image_files[0]
     #input()
@@ -289,7 +290,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         cv2.waitKey(1)
 
     target = patch - config.net_average_image
-    net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
+    net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(gpu_number))
 
     #print config.scale_penalties
     #np.set_printoptions(linewidth=120)
@@ -335,7 +336,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         
         if not all_heatmaps_exist:
             search = patch_crop - config.net_average_image
-            response = net(torch.Tensor(search).cuda())
+            response = net(torch.Tensor(search).cuda(gpu_number))
 
             np_response = response.cpu().detach().numpy()
             uint16_response = rearrangeMolecules(normalize_to_uint16(np_response[0]).transpose(1,2,0))
@@ -387,7 +388,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
             #bbox = cxy_wh_2_bbox(target_pos, window_sz)
             #patch = crop_chw(im, bbox, config.crop_sz)
             #target = patch - config.net_average_image
-            #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
+            #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(gpu_number), lr=config.interp_factor)
 
             res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
 
@@ -427,7 +428,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     return SUCCESS_RETURN_VALUE
 
 
-def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
+def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder, gpu_num):
 
     print "Generating heatmaps: {}, {} -> {}".format(input_video_folder, bb_hw_pairs, output_folder)
 
@@ -458,20 +459,7 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
             print "\nGround truth bounding box for target image index {}:".format(target_image_index), gt_bb
             print "Target bounding box size: h={}, w={}".format(target_bb_h, target_bb_w)
 
-            gt_bb_w = gt_bb[2]
-            gt_bb_h = gt_bb[3]
-            im_w = 720
-            im_h = 480
             patch_size = 125.0
-            bb_scale_factor_x = float(gt_bb_w) / float(target_bb_w)
-            bb_scale_factor_y = float(gt_bb_h) / float(target_bb_h)
-            crop_size = int(max(bb_scale_factor_x * im_w, bb_scale_factor_y, im_h))
-
-            #scale_factor_x = bb_scale_factor_x * ((patch_size - 1) / (float(1 + TRACKER_CONFIG_PADDING) * gt_bb_w))
-            #scale_factor_y = bb_scale_factor_y * ((patch_size - 1) / (float(1 + TRACKER_CONFIG_PADDING) * gt_bb_h))
-
-            #scale_factor_x =  ((crop_size - 1) * float(1 + TRACKER_CONFIG_PADDING) * gt_bb_w) / (im_w * (patch_size - 1))
-            #scale_factor_y =  ((crop_size - 1) * float(1 + TRACKER_CONFIG_PADDING) * gt_bb_h) / (im_h * (patch_size - 1))
 
             scale_factor_x = patch_size / (target_bb_w * float(1.0 + TRACKER_CONFIG_PADDING))
             scale_factor_y = patch_size / (target_bb_h * float(1.0 + TRACKER_CONFIG_PADDING))
@@ -481,7 +469,8 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
                                                                     scale_factor_pair=(scale_factor_y, scale_factor_x),
                                                                     target_image_index=target_image_index,
                                                                     target_groundtruth_bb=gt_bb,
-                                                                    output_folder=target_image_output_dir)
+                                                                    output_folder=target_image_output_dir,
+                                                                    gpu_num=gpu_num)
     
             if result == SKIPPED_RETURN_VALUE:
                 print "Bounding box height={} and width={} skipped for target image index {}".format(target_bb_h,
@@ -491,13 +480,18 @@ def generate_heatmaps_for_video(input_video_folder, bb_hw_pairs, output_folder):
 if __name__ == '__main__':
     # base dataset path and setting
     parser = argparse.ArgumentParser(description='Test DCFNet on OTB')
-    parser.add_argument('--dataset', metavar='SET', default='OTB2013',
-                        choices=['OTB2013', 'OTB2015'], help='tune on which dataset')
     parser.add_argument('--dataset_folder', metavar='FOLDER', required=True,
                         help='Path of folder containing all dataset video folders')
     parser.add_argument('--output_folder', metavar='FOLDER', required=True,
                         help='Path of folder to write all generated heatmaps for videos in dataset_folder')
-    parser.add_argument('--model', metavar='PATH', default='param.pth')
+    parser.add_argument('--gpu_num', metavar='NUM', default=0, required=False, type=int,
+                        help='The GPU number to use')
+    parser.add_argument('--num_data_splits', metavar='NUM', default=1, required=False, type=int,
+                        help='How many sets the scale factor pairs should be split into')
+    parser.add_argument('--data_split_to_use', metavar='NUM', default=0, required=False, type=int,
+                        help='Which set of the scale factor pair data sets should be used by this invocation')
+    parser.add_argument('--num_parallel_on_this_machine', metavar='NUM', default=1, required=False, type=int,
+                        help='The number of invocations of DCFNet.py that will be running together on this machine')
     args = parser.parse_args()
 
     #dataset = args.dataset
@@ -507,10 +501,10 @@ if __name__ == '__main__':
     #videos = sorted(annos.keys())
 
     import multiprocessing
-    torch.set_num_threads(multiprocessing.cpu_count() - 1)
+    torch.set_num_threads(int(multiprocessing.cpu_count() / args.num_parallel_on_this_machine))
 
-    for max_bb_side_size in [150, 200, 275, 290]:
-        min_bb_side_size = 55
+    for max_bb_side_size in [290]:
+        min_bb_side_size = 20
         #max_bb_side_size = 150 #275
         bb_side_size_step = 5
 
@@ -518,7 +512,12 @@ if __name__ == '__main__':
         bb_side_sizes = (np.arange(num_bb_side_sizes) * bb_side_size_step) + min_bb_side_size
         bb_hw_pairs = [np.array((bb_side_sizes[i / num_bb_side_sizes], bb_side_sizes[i % num_bb_side_sizes]))
                               for i in range(num_bb_side_sizes ** 2)]
-                              
+        
+        this_run_bb_hw_pairs = []
+        for index, pair in enumerate(bb_hw_pairs):
+            if index % args.num_data_splits == args.num_data_split_to_use:
+                this_run_bb_hw_pairs.append(pair)
+
         abs_dataset_folder = os.path.realpath(args.dataset_folder)
         abs_output_folder = os.path.realpath(args.output_folder)
         print "abs_dataset_folder:", abs_dataset_folder
@@ -531,8 +530,9 @@ if __name__ == '__main__':
 
             output_dir_for_this_video = os.path.join(abs_output_folder, dir_entry)
             generate_heatmaps_for_video(input_video_folder=input_video_folder,
-                                        bb_hw_pairs=bb_hw_pairs,
-                                        output_folder=output_dir_for_this_video)
+                                        bb_hw_pairs=this_run_bb_hw_pairs,
+                                        output_folder=output_dir_for_this_video,
+                                        gpu_num=gpu_num)
 
         #(1, 1), 
 
@@ -589,7 +589,7 @@ if __name__ == '__main__':
     config = TrackerConfig()
     net = DCFNet(config)
     net.load_param(args.model)
-    net.eval().cuda()
+    net.eval().cuda(gpu_number)
 
     while 1:
         speed = []
@@ -626,7 +626,7 @@ if __name__ == '__main__':
                 print patch.shape
 
             target = patch - config.net_average_image
-            net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
+            net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(gpu_number))
 
             #print config.scale_penalties
             #np.set_printoptions(linewidth=120)
@@ -657,7 +657,7 @@ if __name__ == '__main__':
                 patch_crop[0, :] = resize_with_pad_to_square(im, config.scale_factors, config.crop_sz)
 
                 search = patch_crop - config.net_average_image
-                response = net(torch.Tensor(search).cuda())
+                response = net(torch.Tensor(search).cuda(gpu_number))
 
                 if visualization:
                     
@@ -755,7 +755,7 @@ if __name__ == '__main__':
                 #bbox = cxy_wh_2_bbox(target_pos, window_sz)
                 #patch = crop_chw(im, bbox, config.crop_sz)
                 #target = patch - config.net_average_image
-                #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
+                #net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(gpu_number), lr=config.interp_factor)
 
                 res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
 
