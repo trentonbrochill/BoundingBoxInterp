@@ -146,7 +146,7 @@ class LogFrame:
         self.gt_bb = ground_truth_bounding_box
         self.bb = None  # type: typing.Union[BoundingBox, None]
         self.bb_is_ground_truth = False
-	self.heatmap_data_cache = {}
+        self.heatmap_data_cache = {}
 
     def _get_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> np.ndarray:
         return cv2.imread(str(self.heatmap_path_dict[heatmap_config]), cv2.IMREAD_ANYDEPTH)
