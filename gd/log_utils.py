@@ -1,3 +1,4 @@
+import collections
 import pathlib.Path
 import typing
 
@@ -133,15 +134,45 @@ class LogFrame:
         self.gt_bb = ground_truth_bounding_box
         self.bb = None  # type: typing.Union[BoundingBox, None]
         self.bb_is_ground_truth = False
+	self.heatmap_data_cache = {}
 
-    def has_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> bool:
-        return heatmap_config in self.heatmap_path_dict
-
-    def get_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> np.ndarray:
-        return cv2.imread(str(self.heatmap_path_dict[heatmap_config]))
+    def _get_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> np.ndarray:
+        return cv2.imread(str(self.heatmap_path_dict[heatmap_config]), cv2.IMREAD_ANYDEPTH)
 
     def get_image(self) -> np.ndarray:
         return cv2.imread(str(self.image_path))
+
+    @staticmethod
+    def round_to_multiple_of_five(numeric_value: NumericValue) -> int:
+        return 5 * int(round(numeric_value / 5))
+
+    def get_cached_heatmap(self, bb_height: NumericType, bb_width: NumericType, target_frame: int) -> np.ndarray:
+        rounded_bb_height = LogFrame.round_to_multiple_of_five(bb_height)
+        rounded_bb_width = LogFrame.round_to_multiple_of_five(bb_width)
+        heatmap_config = HeatmapConfiguration(bb_height=rounded_bb_height,
+                                              bb_width=rounded_bb_width,
+                                              target_frame=target_frame)
+ 
+        if heatmap_config not in self.heatmap_data_cache.keys():
+            self.heatmap_data_cache[start_heatmap_config] = self._get_heatmap_with_config(heatmap_config)
+
+        return self.heatmap_data_cache[heatmap_config]
+
+    def get_heatmap_data_pixels(self,
+                                start_and_end_frame_numbers: typing.Tuple[int, int],
+                                bb_height: NumericType,
+                                bb_width: NumericType,
+                                pixel_x: NumericType,
+                                pixel_y: NumericType) -> typing.Tuple[np.uint16, np.uint16]:
+        return (self.get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[pixel_x][pixel_y],
+                self.get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[pixel_x][pixel_y])
+
+    def clear_heatmap_data_cache(self):
+        delete self.heatmap_data_cache
+        self.heatmap_data_cache = {}
+
+    def get_number(self) -> int:
+        return self.num
 
     def set_bb(self, estimated_bb: BoundingBox):
         assert not self.bb_is_ground_truth, "A frame that is set to ground truth should not be given a bb estimate"
@@ -195,3 +226,7 @@ class LogFrame:
 
     def to_json_dict(self) -> dict:
         return {"frame_num": self.num, "bb": self.bb.to_list(), "bb_err": self.bb_error()}
+
+                 
+
+
