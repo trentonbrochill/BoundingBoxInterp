@@ -69,7 +69,7 @@ class TrackerConfig(object):
 
     net_input_size = [crop_sz[0], crop_sz[1]]
     net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
-    output_sigma = max(crop_sz) / (1 + padding) * output_sigma_factor
+    output_sigma = 125 / (1 + padding) * output_sigma_factor
     y = gaussian_shaped_labels(output_sigma, net_input_size)
     yf = torch.rfft(torch.Tensor(y).view(1, 1, crop_sz[1], crop_sz[0]).cuda(), signal_ndim=2)
     cos_window = torch.Tensor(np.outer(np.hanning(crop_sz[1]), np.hanning(crop_sz[0]))).cuda()
@@ -80,7 +80,7 @@ class TrackerConfig(object):
 
         self.net_input_size = [self.crop_sz[0], self.crop_sz[1]]
         self.net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
-        self.output_sigma = 900 / (1 + self.padding) * self.output_sigma_factor
+        self.output_sigma = 125 / (1 + self.padding) * self.output_sigma_factor
         #self.output_sigma = max(self.crop_sz) / (1 + self.padding) * self.output_sigma_factor
         self.y = gaussian_shaped_labels(self.output_sigma, self.net_input_size)
         cv2.imshow("gaussian_shaped_labels", self.y)
@@ -276,7 +276,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     #input()
     window_sz = target_sz * (1 + config.padding)
     bbox = cxy_wh_2_bbox(target_pos, window_sz)
-    patch = crop_chw(im, bbox, (300, 300),[104, 117, 123])
+    patch = crop_chw(im, bbox, (125, 125),[104, 117, 123])
     patch = pad_to_size_centered(patch, config.crop_sz,[104, 117, 123])
     #patch = resize_with_pad_to_square(im, config.crop_sz)
     #transposed_patch = np.array([s.transpose(1,2,0) / 255.0 for s in patch_crop])
