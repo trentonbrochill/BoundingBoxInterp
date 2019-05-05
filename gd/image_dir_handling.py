@@ -3,7 +3,7 @@ import pathlib
 import re
 import typing
 
-from . import log_utils
+import log_utils
 
 
 PerFrameHeatmapDict = typing.Dict[int, log_utils.HeatmapPathDict]

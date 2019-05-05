@@ -5,8 +5,8 @@ import pathlib
 import cv2
 import numpy as np
 
-from . import log_utils
-from . import image_dir_handling
+import log_utils
+import image_dir_handling
 
 
 def visualize_frame(all_frames, interp_type_short, num_adj, frame):

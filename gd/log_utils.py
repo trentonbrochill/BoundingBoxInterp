@@ -1,4 +1,3 @@
-import collections
 import pathlib.Path
 import typing
 

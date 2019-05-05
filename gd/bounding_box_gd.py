@@ -7,9 +7,9 @@ import pathlib
 import time
 import typing
 
-from . import log_utils
-from . import interpolation_strategy
-from . import image_dir_handling
+import log_utils
+import interpolation_strategy
+import image_dir_handling
 
 
 # Error is (1 - IOU)

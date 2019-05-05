@@ -2,7 +2,7 @@ import typing
 
 import numpy as np
 
-from . import log_utils
+import log_utils
 
 InterpolationStrategyFunction = typing.Callable[[typing.List[log_utils.LogFrame]], typing.List[log_utils.LogFrame]]
 
