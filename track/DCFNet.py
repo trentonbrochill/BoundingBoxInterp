@@ -73,10 +73,9 @@ class TrackerConfig(object):
     net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
     output_sigma = 125 / (1 + padding) * output_sigma_factor
     y = gaussian_shaped_labels(output_sigma, net_input_size)
-    yf = torch.rfft(torch.Tensor(y).view(1, 1, crop_sz[1], crop_sz[0]).cuda(gpu_number), signal_ndim=2)
     cos_window = torch.Tensor(np.outer(np.hanning(crop_sz[1]), np.hanning(crop_sz[0]))).cuda(gpu_number)
 
-    def __init__(self, square_crop_size_side=720):
+    def __init__(self, square_crop_size_side=720, gpu_number=0):
         self.square_crop_side_size = square_crop_size_side
         self.crop_sz = (self.square_crop_side_size, self.square_crop_side_size)
 
@@ -261,7 +260,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
         mkdir_p(output_patch_crop_dir)
 
     # load feature extractor network
-    config = TrackerConfig(output_square_size)
+    config = TrackerConfig(output_square_size, gpu_number)
     net = DCFNet(config)
     net.load_param(args.model)
     net.eval().cuda(gpu_number)
