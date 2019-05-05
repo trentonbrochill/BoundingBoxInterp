@@ -216,7 +216,7 @@ def generate_heatmap_for_specific_target_and_scale(input_video_folder, num_image
     # Determine the appropriate output square size of the patch for this scale factor pair
     output_square_size = int(max(scale_factor_pair[1] * im.shape[1], scale_factor_pair[0] * im.shape[0]))
 
-    if output_square_size >= 1300:
+    if output_square_size >= 1400:
         print "Skipping scale factor pair {} because it requires too large of a scaled image".format(scale_factor_pair)
         return SKIPPED_RETURN_VALUE
     else:
