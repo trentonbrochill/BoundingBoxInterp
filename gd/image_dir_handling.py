@@ -66,6 +66,8 @@ def get_per_frame_heatmap_dictionaries(video_output_folder_path: pathlib.Path) -
 
                 data_frame_number_string = data_frame_match.group(1)
                 data_frame_number = int(data_frame_number_string.lstrip("0"))
+                if data_frame_number > 32:
+                   print(">32 frame #: {}".format(str(heatmap_data_frame_path)))
                 per_frame_heatmap_dict[data_frame_number][heatmap_config] = heatmap_data_frame_path
 
     return per_frame_heatmap_dict
@@ -86,8 +88,8 @@ def get_per_frame_groundtruth_bbs(groundtruth_rect_path: pathlib.Path) -> typing
             list_of_bb_size_strings = groundtruth_line.strip().replace(' ', '').split(',')
             assert len(list_of_bb_size_strings) == 4, "Expect 4 "
             bb_sizes = [float(size_str) for size_str in list_of_bb_size_strings]
-            per_frame_gt_bb_dict[line_index + 1] = log_utils.BoundingBox(center_x=bb_sizes[0],
-                                                                         center_y=bb_sizes[1],
+            per_frame_gt_bb_dict[line_index + 1] = log_utils.BoundingBox(center_x=bb_sizes[0] + (bb_sizes[2] / 2) - 1,
+                                                                         center_y=bb_sizes[1] + (bb_sizes[3] / 2) - 1,
                                                                          width=bb_sizes[2],
                                                                          height=bb_sizes[3])
 

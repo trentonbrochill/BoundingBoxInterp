@@ -9,23 +9,27 @@ import log_utils
 import image_dir_handling
 
 
+def round_corner(corner):
+    return int(round(corner[0])), int(round(corner[1]))
+
+
 def visualize_frame(all_frames, interp_type_short, num_adj, frame):
     image = all_frames[frame["frame_num"] - 1].get_image()
     gt_bb = all_frames[frame["frame_num"] - 1].get_gt_bb()
     bb = log_utils.BoundingBox(*frame["bb"])
 
     im_show = image  #cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
-    cv2.rectangle(im_show, bb.top_left_corner(), bb.bottom_right_corner(), (0, 255, 0), 3)
-    cv2.rectangle(im_show, gt_bb.top_left_corner(), gt_bb.bottom_right_corner(), (0, 0, 255), 3)
+    cv2.rectangle(im_show, round_corner(bb.top_left_corner()), round_corner(bb.bottom_right_corner()), (0, 255, 0), 3)
+    #cv2.rectangle(im_show, round_corner(gt_bb.top_left_corner()), round_corner(gt_bb.bottom_right_corner()), (0, 0, 255), 3)
     cv2.putText(im_show,
                 interp_type_short + "_f{}_{}-adjs".format(frame["frame_num"], num_adj),
-                (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.CV_AA)
+                (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
     cv2.imshow("{}_results".format(interp_type_short), im_show)
-    cv2.waitKey(50)
+    cv2.waitKey(133)
 
 def main():
     parser = argparse.ArgumentParser(description='Visualizes a bb_results_<time>.json file')
-    parser.add_argument('bb_results_file', metavar='FILE_PATH', required=True,
+    parser.add_argument('bb_results_file', metavar='FILE_PATH',
                         help='The path to the bb_results_<time>.json file to be visualized')
     args = parser.parse_args()
 
@@ -58,7 +62,7 @@ def main():
     for interp_type_short, interp_type_json_key in interpolation_types:
         iterations_list = json_data[interp_type_json_key]["iterations"]
         for iteration in iterations_list:
-            num_adj = iteration["total_number_of_adjustments"]
+            num_adj = iteration["number_of_adjustments"]
             iter_frames_list = iteration["all_frames_estimated_bbs"]
             for frame in iter_frames_list:
                 visualize_frame(all_frames, interp_type_short, num_adj, frame)

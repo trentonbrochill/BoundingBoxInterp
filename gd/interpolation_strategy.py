@@ -27,8 +27,7 @@ def _linearly_interpolate_bounding_boxes(start_bb: log_utils.BoundingBox,
         frame_bb = log_utils.BoundingBox.from_corners(start_bb.top_left_corner() + (top_left_corner_step * index),
                                                       start_bb.top_right_corner() + (top_right_corner_step * index),
                                                       start_bb.bottom_left_corner() + (bottom_left_corner_step * index),
-                                                      start_bb.bottom_right_corner() + (
-                                                                  bottom_right_corner_step * index))
+                                                      start_bb.bottom_right_corner() + (bottom_right_corner_step * index))
         bbs.append(frame_bb)
 
     bbs.append(end_bb)
@@ -47,7 +46,7 @@ def linear_interpolation_generate_bounding_boxes(log_frames: typing.List[log_uti
 
     # Iterate over all frames between the start and end frame, exclusive
     for index in range(1, num_frames - 1):
-        log_frames[index].set_bb(bbs[index - 1])
+        log_frames[index].set_bb(bbs[index])
 
     return log_frames
 
@@ -59,9 +58,9 @@ def _get_affinity_derivative(log_frame: log_utils.LogFrame,
                              pixel_x: log_utils.NumericType,
                              pixel_y: log_utils.NumericType) -> np.ndarray:
     top_pixel_vals = log_frame.get_heatmap_data_pixels(start_and_end_frame_numbers,
-                                                       bb_height, bb_width, pixel_x, pixel_y + 1)
-    bot_pixel_vals = log_frame.get_heatmap_data_pixels(start_and_end_frame_numbers,
                                                        bb_height, bb_width, pixel_x, pixel_y - 1)
+    bot_pixel_vals = log_frame.get_heatmap_data_pixels(start_and_end_frame_numbers,
+                                                       bb_height, bb_width, pixel_x, pixel_y + 1)
     left_pixel_vals = log_frame.get_heatmap_data_pixels(start_and_end_frame_numbers,
                                                         bb_height, bb_width, pixel_x - 1, pixel_y)
     right_pixel_vals = log_frame.get_heatmap_data_pixels(start_and_end_frame_numbers,
@@ -76,7 +75,7 @@ def _get_affinity_derivative(log_frame: log_utils.LogFrame,
                                                           bb_height, bb_width + SCALE_STEP_SIZE, pixel_x, pixel_y)
 
     x_derivative = np.sum(np.array(right_pixel_vals) - np.array(left_pixel_vals))
-    y_derivative = np.sum(np.array(top_pixel_vals) - np.array(bot_pixel_vals))
+    y_derivative = np.sum(np.array(bot_pixel_vals) - np.array(top_pixel_vals))
     height_derivative = np.sum(np.array(taller_pixel_vals) - np.array(shorter_pixel_vals))
     width_derivative = np.sum(np.array(fatter_pixel_vals) - np.array(skinnier_pixel_vals))
 
@@ -96,7 +95,7 @@ def gradient_descent_generate_bounding_boxes(log_frames: typing.List[log_utils.L
     # Initialize all of the bounding boxes using linear interpolation
     log_frames = linear_interpolation_generate_bounding_boxes(log_frames)
 
-    for _ in range(GD_VIDEO_PASS_COUNT):
+    for video_pass_index in range(GD_VIDEO_PASS_COUNT):
         # Iterate over all frames between the start and end frame, exclusive
         for frame_index in range(1, num_frames - 1):
             curr_frame = log_frames[frame_index]
@@ -106,8 +105,9 @@ def gradient_descent_generate_bounding_boxes(log_frames: typing.List[log_utils.L
                                                                         num_frames=3)[1]
             lin_interp_direction = curr_frame.get_bb() - lin_interp_anchor_bb
 
-            for _ in range(GD_FRAME_PASS_COUNT):
+            for frame_pass_index in range(GD_FRAME_PASS_COUNT):
                 curr_bb = curr_frame.get_bb()
+                print("VP{}-FN{}-FP{}: curr_bb={}".format(video_pass_index, frame_index + 1, frame_pass_index, str(curr_bb)))
                 affinity_derivative = _get_affinity_derivative(log_frame=curr_frame,
                                                                start_and_end_frame_numbers=start_and_end_frame_numbers,
                                                                bb_height=curr_bb.get_height(),
@@ -117,6 +117,8 @@ def gradient_descent_generate_bounding_boxes(log_frames: typing.List[log_utils.L
 
                 new_bb = (GD_ALPHA_AFFINITY * affinity_derivative) + (GD_ALPHA_ANCHOR * lin_interp_direction) \
                          + curr_bb.as_np_array()
+
+                
 
                 curr_frame.set_bb(new_bb)
 

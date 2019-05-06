@@ -1,4 +1,4 @@
-import pathlib.Path
+import pathlib
 import typing
 
 import cv2
@@ -63,27 +63,27 @@ class BoundingBox:
         center_x = round((top_left.x + top_right.x) / 2)
         center_y = round((top_left.y + bottom_left.y) / 2)
         width = bottom_right.x - bottom_left.x
-        height = top_right.y - bottom_right.y
+        height = bottom_right.y - top_right.y 
         return BoundingBox(center_x, center_y, width, height)
 
     def top_left_corner(self) -> XYTuple:
-        return XYTuple(x=self.center_x - (self.width // 2),
-                       y=self.center_y + (self.height // 2))
+        return XYTuple(x=self.center_x - (self.width / 2),
+                       y=self.center_y - (self.height / 2))
 
     def top_right_corner(self) -> XYTuple:
-        return XYTuple(x=self.center_x + (self.width // 2),
-                       y=self.center_y + (self.height // 2))
+        return XYTuple(x=self.center_x + (self.width / 2),
+                       y=self.center_y - (self.height / 2))
 
     def bottom_right_corner(self) -> XYTuple:
-        return XYTuple(x=self.center_x + (self.width // 2),
-                       y=self.center_y - (self.height // 2))
+        return XYTuple(x=self.center_x + (self.width / 2),
+                       y=self.center_y + (self.height / 2))
 
     def bottom_left_corner(self) -> XYTuple:
-        return XYTuple(x=self.center_x - (self.width // 2),
-                       y=self.center_y - (self.height // 2))
+        return XYTuple(x=self.center_x - (self.width / 2),
+                       y=self.center_y + (self.height / 2))
 
     def top(self) -> NumericType:
-        return self.center_y + (self.height / 2)
+        return self.center_y - (self.height / 2)
 
     def left(self) -> NumericType:
         return self.center_x - (self.width / 2)
@@ -92,7 +92,7 @@ class BoundingBox:
         return self.center_x + (self.width / 2)
 
     def bottom(self) -> NumericType:
-        return self.center_y - (self.height / 2)
+        return self.center_y + (self.height / 2)
 
     def get_all_corners(self) -> typing.Tuple[XYTuple, XYTuple, XYTuple, XYTuple]:
         # top left, top right, bottom right, bottom left
@@ -123,6 +123,9 @@ class BoundingBox:
         else:
             raise TypeError("Subtraction not support between these types: {} - {}".format(str(type(self)),
                                                                                           str(type(other))))
+
+    def __str__(self):
+        return "BoundingBox[Center=({}, {});HxW=({}x{})".format(self.center_x, self.center_y, self.height, self.width)
 
 
 class HeatmapConfiguration(typing.NamedTuple):
@@ -176,8 +179,10 @@ class LogFrame:
                                 bb_width: NumericType,
                                 pixel_x: NumericType,
                                 pixel_y: NumericType) -> typing.Tuple[np.uint16, np.uint16]:
-        return (self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[pixel_x][pixel_y],
-                self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[pixel_x][pixel_y])
+        rounded_pixel_x = int(round(pixel_x))
+        rounded_pixel_y = int(round(pixel_y))
+        return (self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[rounded_pixel_x][rounded_pixel_y],
+                self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[rounded_pixel_x][rounded_pixel_y])
 
     def clear_heatmap_data_cache(self):
         del self.heatmap_data_cache
@@ -216,11 +221,11 @@ class LogFrame:
         # Determine the (x, y)-coordinates of the intersection rectangle
         intersect_right = min(self.bb.right(), self.gt_bb.right())
         intersect_left = max(self.bb.left(), self.gt_bb.left())
-        intersect_top = min(self.bb.top(), self.gt_bb.top())
-        intersect_bottom = max(self.bb.bottom(), self.gt_bb.bottom())
+        intersect_top = max(self.bb.top(), self.gt_bb.top())
+        intersect_bottom = min(self.bb.bottom(), self.gt_bb.bottom())
 
         # Compute the area of intersection rectangle
-        intersect_area = max(0, intersect_right - intersect_left + 1) * max(0, intersect_top - intersect_bottom + 1)
+        intersect_area = max(0, intersect_right - intersect_left + 1) * max(0, intersect_bottom - intersect_top  + 1)
 
         # Compute the area of both the prediction and ground-truth rectangles
         gt_bb_area = self.gt_bb.get_height() * self.gt_bb.get_width()
