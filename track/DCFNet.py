@@ -19,7 +19,7 @@ from eval_otb import eval_auc
 
 SKIPPED_RETURN_VALUE = "Skipped"
 SUCCESS_RETURN_VALUE = "Success"
-TRACKER_CONFIG_PADDING = 1.5
+TRACKER_CONFIG_PADDING = 0.5
 
 def apply_matplotlib_colormap(image, cmap=plt.get_cmap('viridis')):
 
