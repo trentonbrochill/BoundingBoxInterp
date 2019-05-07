@@ -1,6 +1,8 @@
 import collections
+import multiprocessing
 import pathlib
 import re
+import sys
 import typing
 
 import log_utils
@@ -14,62 +16,93 @@ TARGET_IMAGE_DIRECTORY_REGEX = re.compile(r"target_image_([0-9]+)")
 FRAME_FILE_REGEX = re.compile(r"([0-9]+)\.[pP][nN][gG]")
 
 
+def _parallel_scale_dir_search(bb_h_w_dir_entry):
+    dir_triplets = []
+    if not bb_h_w_dir_entry.is_dir():
+        print("\"{}\" is not a directory; skipping...".format(str(bb_h_w_dir_entry)))
+        return dir_triplets
+
+    expected_bb_h_w_directory = bb_h_w_dir_entry.name
+    bb_h_w_dir_match = BB_HEIGHT_WIDTH_DIRECTORY_REGEX.fullmatch(expected_bb_h_w_directory)
+    if bb_h_w_dir_match is None:
+        print("\"{}\" (basename of \"{}\") does not match the "
+              "BB height/width directory regex".format(expected_bb_h_w_directory, str(bb_h_w_dir_entry)))
+        return dir_triplets
+
+    bb_h = int(bb_h_w_dir_match.group(1))
+    bb_w = int(bb_h_w_dir_match.group(2))
+
+    for target_image_dir_entry in bb_h_w_dir_entry.iterdir():
+        if not target_image_dir_entry.is_dir():
+            print("\"{}\" is not a directory; skipping...".format(str(target_image_dir_entry)))
+            continue
+
+        expected_taget_image_directory = target_image_dir_entry.name
+        target_image_match = TARGET_IMAGE_DIRECTORY_REGEX.fullmatch(expected_taget_image_directory)
+        if target_image_match is None:
+            print("\"{}\" (basename of \"{}\") does not match the "
+                  "target image directory regex".format(expected_taget_image_directory,
+                                                        str(target_image_dir_entry)))
+            continue
+
+        target_image = int(target_image_match.group(1))
+
+        heatmap_config = log_utils.HeatmapConfiguration(bb_height=bb_h,
+                                                        bb_width=bb_w,
+                                                        target_frame=target_image)
+
+        heatmap_data_dir = target_image_dir_entry.joinpath("heatmap_data").resolve(strict=True)
+        for heatmap_data_frame_path in heatmap_data_dir.iterdir():
+            if not heatmap_data_frame_path.is_file():
+                print("\"{}\" is not a file; skipping...".format(str(heatmap_data_frame_path)))
+                continue
+
+            expected_data_frame_name = heatmap_data_frame_path.name
+            data_frame_match = FRAME_FILE_REGEX.fullmatch(expected_data_frame_name)
+            if data_frame_match is None:
+                print("\"{}\" (basename of \"{}\") does not match the "
+                      "frame file regex".format(expected_data_frame_name,
+                                                str(heatmap_data_frame_path)))
+                continue
+
+            data_frame_number_string = data_frame_match.group(1)
+            data_frame_number = int(data_frame_number_string.lstrip("0"))
+            if data_frame_number > 32:
+               print(">32 frame #: {}".format(str(heatmap_data_frame_path)))
+
+            
+            #per_frame_heatmap_dict[data_frame_number][heatmap_config] = heatmap_data_frame_path
+            dir_triplets.append((data_frame_number, heatmap_config, heatmap_data_frame_path))
+    print("Done with {}".format(str(bb_h_w_dir_entry)))
+    return dir_triplets
+
+
 def get_per_frame_heatmap_dictionaries(video_output_folder_path: pathlib.Path) -> PerFrameHeatmapDict:
     per_frame_heatmap_dict = collections.defaultdict(dict)
-    for bb_h_w_dir_entry in video_output_folder_path.iterdir():
-        if not bb_h_w_dir_entry.is_dir():
-            print("\"{}\" is not a directory; skipping...".format(str(bb_h_w_dir_entry)))
-            continue
+    generate_file_paths = True
+    if generate_file_paths:
+        for height in range(40, 291, 5):
+            for width in range(40, 291, 5):
+                for target_frame in range(32):
+                    for frame in range(1, 33):
+                        heatmap_config = log_utils.HeatmapConfiguration(bb_height=height,
+                                                                       bb_width=width,
+                                                                        target_frame=target_frame)
+                        file_path = video_output_folder_path.joinpath("bb_h={}_w={}".format(height, width))
+                        file_path = file_path.joinpath("target_image_{}".format(target_frame))
+                        file_path = file_path.joinpath("heatmap_data")
+                        file_path = file_path.joinpath("{:04}.png".format(frame))
+                        per_frame_heatmap_dict[frame][heatmap_config] = file_path
+    else:
+        with multiprocessing.Pool(24) as pool:
 
-        expected_bb_h_w_directory = bb_h_w_dir_entry.name
-        bb_h_w_dir_match = BB_HEIGHT_WIDTH_DIRECTORY_REGEX.fullmatch(expected_bb_h_w_directory)
-        if bb_h_w_dir_match is None:
-            print("\"{}\" (basename of \"{}\") does not match the "
-                  "BB height/width directory regex".format(expected_bb_h_w_directory, str(bb_h_w_dir_entry)))
-            continue
+            imap_unordered_it = pool.map(_parallel_scale_dir_search, 
+                                         sorted(list(video_output_folder_path.iterdir())),
+                                         chunksize=10)
 
-        bb_h = int(bb_h_w_dir_match.group(1))
-        bb_w = int(bb_h_w_dir_match.group(2))
-
-        for target_image_dir_entry in bb_h_w_dir_entry.iterdir():
-            if not target_image_dir_entry.is_dir():
-                print("\"{}\" is not a directory; skipping...".format(str(target_image_dir_entry)))
-                continue
-
-            expected_taget_image_directory = target_image_dir_entry.name
-            target_image_match = TARGET_IMAGE_DIRECTORY_REGEX.fullmatch(expected_taget_image_directory)
-            if target_image_match is None:
-                print("\"{}\" (basename of \"{}\") does not match the "
-                      "target image directory regex".format(expected_taget_image_directory,
-                                                            str(target_image_dir_entry)))
-                continue
-
-            target_image = int(target_image_match.group(1))
-
-            heatmap_config = log_utils.HeatmapConfiguration(bb_height=bb_h,
-                                                            bb_width=bb_w,
-                                                            target_frame=target_image)
-
-            heatmap_data_dir = target_image_dir_entry.joinpath("heatmap_data").resolve(strict=True)
-            for heatmap_data_frame_path in heatmap_data_dir.iterdir():
-                if not heatmap_data_frame_path.is_file():
-                    print("\"{}\" is not a file; skipping...".format(str(heatmap_data_frame_path)))
-                    continue
-
-                expected_data_frame_name = heatmap_data_frame_path.name
-                data_frame_match = FRAME_FILE_REGEX.fullmatch(expected_data_frame_name)
-                if data_frame_match is None:
-                    print("\"{}\" (basename of \"{}\") does not match the "
-                          "frame file regex".format(expected_data_frame_name,
-                                                    str(heatmap_data_frame_path)))
-                    continue
-
-                data_frame_number_string = data_frame_match.group(1)
-                data_frame_number = int(data_frame_number_string.lstrip("0"))
-                if data_frame_number > 32:
-                   print(">32 frame #: {}".format(str(heatmap_data_frame_path)))
-                per_frame_heatmap_dict[data_frame_number][heatmap_config] = heatmap_data_frame_path
-
+            for dir_triplet_list in imap_unordered_it:
+                for data_frame_number, heatmap_config, heatmap_data_frame_path in dir_triplet_list:
+                    per_frame_heatmap_dict[data_frame_number][heatmap_config] = heatmap_data_frame_path
     return per_frame_heatmap_dict
 
 

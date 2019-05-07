@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
+import collections
+import copy
+import hashlib
 import json
 import os
 import pathlib
@@ -89,12 +93,63 @@ def main():
     video_output_folder_path = pathlib.Path(args.video_output_folder).resolve(strict=True)
     output_folder_path = pathlib.Path(args.estimated_bb_output_folder).resolve(strict=True)
 
-    groundtruth_rect_file_path = video_input_folder_path.joinpath("groundtruth_rect.txt")
-    input_video_dir_path = video_input_folder_path.joinpath("img")
+    in_folder_hash = hashlib.sha1("{}".format(video_input_folder_path).encode('utf-8'))
+    out_folder_hash = hashlib.sha1("{}".format(video_output_folder_path).encode('utf-8'))
+    json_file_name = "{}_{}.json".format(base64.urlsafe_b64encode(in_folder_hash.digest()[:20]).decode("utf-8") ,
+                                         base64.urlsafe_b64encode(out_folder_hash.digest()[:20]).decode("utf-8") )
 
-    per_frame_gt_bb_dict = image_dir_handling.get_per_frame_groundtruth_bbs(groundtruth_rect_file_path)
-    per_frame_image_dict = image_dir_handling.get_per_frame_image_paths(input_video_dir_path)
-    per_frame_heatmap_dict = image_dir_handling.get_per_frame_heatmap_dictionaries(video_output_folder_path)
+    json_file_path = pathlib.Path(os.path.join(os.getcwd(), json_file_name)).resolve()
+    if json_file_path.is_file():
+        with open(str(json_file_path), 'r') as json_file:
+            json_dict = json.load(json_file)
+            per_frame_gt_bb_dict_from_json = json_dict["per_frame_gt_bb_dict"]
+            per_frame_image_dict_from_json = json_dict["per_frame_image_dict"]
+            per_frame_heatmap_dict_from_json = json_dict["per_frame_heatmap_dict"]
+
+        per_frame_gt_bb_dict = {}
+        for key, value in per_frame_gt_bb_dict_from_json.items():
+            per_frame_gt_bb_dict[int(key)] = log_utils.BoundingBox.from_list(value)
+
+        per_frame_image_dict = {}
+        for key, value in per_frame_image_dict_from_json.items():
+            per_frame_image_dict[int(key)] = pathlib.Path(value)
+
+        per_frame_heatmap_dict = collections.defaultdict(dict)
+        for key, value in per_frame_heatmap_dict_from_json.items():
+            for key2, value2 in value.items():
+                key2_tokens = key2.split(',')
+                key2_config = log_utils.HeatmapConfiguration(bb_height=int(key2_tokens[0]),
+                                                             bb_width=int(key2_tokens[1]),
+                                                             target_frame=int(key2_tokens[2]))
+                per_frame_heatmap_dict[int(key)][key2_config] = pathlib.Path(value2)
+    else:
+        groundtruth_rect_file_path = video_input_folder_path.joinpath("groundtruth_rect.txt")
+        input_video_dir_path = video_input_folder_path.joinpath("img")
+
+        per_frame_gt_bb_dict = image_dir_handling.get_per_frame_groundtruth_bbs(groundtruth_rect_file_path)
+        per_frame_image_dict = image_dir_handling.get_per_frame_image_paths(input_video_dir_path)
+        per_frame_heatmap_dict = image_dir_handling.get_per_frame_heatmap_dictionaries(video_output_folder_path)
+
+        gt_bb_dict_copy = copy.deepcopy(per_frame_gt_bb_dict)
+        for key, value in gt_bb_dict_copy.items():
+            gt_bb_dict_copy[key] = value.to_list()
+
+        per_frame_image_dict_copy = copy.deepcopy(per_frame_image_dict)
+        for key, value in per_frame_image_dict_copy.items():
+            per_frame_image_dict_copy[key] = str(value)
+
+        per_frame_heatmap_dict_copy = collections.defaultdict(dict)
+        for key, value in per_frame_heatmap_dict.items():
+            for key2, value2 in value.items():
+                key2_str = "{},{},{}".format(key2.bb_height, key2.bb_width, key2.target_frame)
+                per_frame_heatmap_dict_copy[key][key2_str] = str(value2)
+
+        with open(str(json_file_path), 'w') as json_file:
+            json_dict = {}
+            json_dict["per_frame_gt_bb_dict"] = gt_bb_dict_copy
+            json_dict["per_frame_image_dict"] = per_frame_image_dict_copy
+            json_dict["per_frame_heatmap_dict"] = per_frame_heatmap_dict_copy
+            json.dump(json_dict, json_file, indent='  ')
 
     assert sorted(per_frame_gt_bb_dict.keys()) == sorted(per_frame_heatmap_dict.keys()), \
         "Expect same frames of heatmap data ({}) and ground truth bound box data({})".format(sorted(per_frame_heatmap_dict.keys()), sorted(per_frame_gt_bb_dict.keys()))

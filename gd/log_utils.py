@@ -1,3 +1,4 @@
+import os
 import pathlib
 import typing
 
@@ -114,6 +115,14 @@ class BoundingBox:
     def as_np_array(self) -> np.ndarray:
         return np.array(self.to_list())
 
+    @staticmethod
+    def from_np_array(bb_as_np_array) -> 'BoundingBox':
+        return BoundingBox(*list(bb_as_np_array))
+
+    @staticmethod
+    def from_list(bb_as_list) -> 'BoundingBox':
+        return BoundingBox(*bb_as_list)
+
     def __sub__(self, other):
         if isinstance(other, BoundingBox):
             return np.array([self.center_x - other.center_x,
@@ -125,7 +134,7 @@ class BoundingBox:
                                                                                           str(type(other))))
 
     def __str__(self):
-        return "BoundingBox[Center=({}, {});HxW=({}x{})".format(self.center_x, self.center_y, self.height, self.width)
+        return "BoundingBox[Center=({:.2f}, {:.2f});HxW=({:.2f}x{:.2f})".format(self.center_x, self.center_y, self.height, self.width)
 
 
 class HeatmapConfiguration(typing.NamedTuple):
@@ -151,7 +160,15 @@ class LogFrame:
         self.bb_is_ground_truth = False
         self.heatmap_data_cache = {}
 
+
+
     def _get_heatmap_with_config(self, heatmap_config: HeatmapConfiguration) -> np.ndarray:
+        try:
+            self.heatmap_path_dict[heatmap_config].resolve(strict=True)
+        except FileNotFoundError as e:
+            print("os.exists: {}".format(os.exists(str(self.heatmap_path_dict[heatmap_config]))))
+            raise KeyError("No heatmap for frame {}, config {}, expected path {}".format(self.num, str(heatmap_config), str(self.heatmap_path_dict[heatmap_config]))) from e
+
         return cv2.imread(str(self.heatmap_path_dict[heatmap_config]), cv2.IMREAD_ANYDEPTH)
 
     def get_image(self) -> np.ndarray:
@@ -173,6 +190,7 @@ class LogFrame:
 
         return self.heatmap_data_cache[heatmap_config]
 
+
     def get_heatmap_data_pixels(self,
                                 start_and_end_frame_numbers: typing.Tuple[int, int],
                                 bb_height: NumericType,
@@ -181,8 +199,8 @@ class LogFrame:
                                 pixel_y: NumericType) -> typing.Tuple[np.uint16, np.uint16]:
         rounded_pixel_x = int(round(pixel_x))
         rounded_pixel_y = int(round(pixel_y))
-        return (self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[rounded_pixel_x][rounded_pixel_y],
-                self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[rounded_pixel_x][rounded_pixel_y])
+        return (self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[0])[rounded_pixel_y][rounded_pixel_x],
+                self._get_cached_heatmap(bb_height, bb_width, start_and_end_frame_numbers[1])[rounded_pixel_y][rounded_pixel_x])
 
     def clear_heatmap_data_cache(self):
         del self.heatmap_data_cache
